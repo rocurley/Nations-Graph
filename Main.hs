@@ -1,34 +1,39 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
-import Data.Aeson
-import Data.Aeson.Lens
-import Control.Lens
-import qualified Data.Text as T
-import Control.Monad.Trans.Maybe
-import Control.Monad.Trans
-import Control.Monad
-import qualified Data.Text.IO as TIO
-import Data.Attoparsec.Text as AP hiding (try)
-import Control.Applicative as A
-import Data.Monoid
+
 import qualified Data.Map as M
+import Data.Monoid
 import Data.List
 import Data.Maybe
 import Data.Char
+import Data.Foldable (foldMap)
+
+import Control.Monad.Trans.Maybe
+import Control.Monad.Trans
+import Control.Monad
+import Control.Applicative as A
+
+import Data.Aeson
+import Data.Aeson.Lens
+import Control.Lens
+
+import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
+import Data.Text.Encoding
+import qualified Data.ByteString.Lazy.Char8 as BSC
+
+import Data.Attoparsec.Text as AP hiding (try)
+
 import Control.Monad.Trans.Either
 import Control.Error.Util
-import qualified Data.ByteString.Lazy.Char8 as BSC
-import Data.Foldable (foldMap)
+import Control.Exception
+
 import Network.HTTP.Client (HttpException)
 import Network.Wreq
 import qualified Network.Wreq.Session as Sess 
-import Data.Text.Encoding
-import Control.Exception
-baseUrl = "http://en.wikipedia.org/w/api.php?action=query&prop=revisions&rvprop=content&format=json&titles="
-wikiAPI = "http://en.wikipedia.org/w/api.php" :: String
 
-textToBSC = BSC.fromChunks . (:[]) . encodeUtf8
+wikiAPI = "http://en.wikipedia.org/w/api.php" :: String
 
 data Wiki = WikiText T.Text |
             WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |
