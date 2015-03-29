@@ -1,7 +1,6 @@
-:ext LambdaCase
-:ext OverloadedStrings
-:ext TupleSections
-import Network.HTTP
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 import Data.Aeson
 import Data.Aeson.Lens
 import Control.Lens
@@ -10,7 +9,7 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Trans
 import Control.Monad
 import qualified Data.Text.IO as TIO
-import Data.Attoparsec.Text as AP
+import Data.Attoparsec.Text as AP hiding (try)
 import Control.Applicative as A
 import Data.Monoid
 import qualified Data.Map as M
@@ -19,11 +18,17 @@ import Data.Maybe
 import Data.Char
 import Control.Monad.Trans.Either
 import Control.Error.Util
-import Network.Stream hiding (failWith)
 import qualified Data.ByteString.Lazy.Char8 as BSC
 import Data.Foldable (foldMap)
-
+import Network.HTTP.Client (HttpException)
+import Network.Wreq
+import qualified Network.Wreq.Session as Sess 
+import Data.Text.Encoding
+import Control.Exception
 baseUrl = "http://en.wikipedia.org/w/api.php?action=query&prop=revisions&rvprop=content&format=json&titles="
+wikiAPI = "http://en.wikipedia.org/w/api.php" :: String
+
+textToBSC = BSC.fromChunks . (:[]) . encodeUtf8
 
 data Wiki = WikiText T.Text |
             WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |
@@ -147,16 +152,26 @@ redirectParser = do
     WikiLink link _ <- wikiLinkParser
     return link
 
-data HistoryError = HTTPError ConnError | JsonParseError | WikiParseError String | MissingInfobox | InfoboxInterpretationError deriving Show
+data HistoryError = HTTPError HttpException | JsonParseError | WikiParseError String | MissingInfobox | InfoboxInterpretationError deriving Show
 
-
-getWiki :: String -> EitherT HistoryError IO (String,T.Text)
-getWiki article = do
-    resp <- (EitherT $ (_Left%~HTTPError) <$> simpleHTTP (getRequest $ baseUrl ++ urlEncode article):: EitherT HistoryError IO (Response String))
-    let json = decode $ BSC.pack $ rspBody resp
-    source <- failWith JsonParseError $ join $ json^?key "query".key "pages".traverseObject.key "revisions".nth 0.key "*"
+getWiki :: Sess.Session -> String -> EitherT HistoryError IO (String,T.Text)
+getWiki sess article = do
+    let opts = param "action" .~ ["query"] $
+               param "prop" .~ ["revisions"] $
+               param "rvprop" .~ ["content"] $
+               param "format" .~ ["json"] $
+               param "titles" .~ [T.pack article] $ defaults
+    resp <- EitherT $ (_Left%~HTTPError) <$> try (Sess.getWith opts sess wikiAPI)
+    source <- failWith JsonParseError $ (resp^?responseBody
+                                            .key "query"
+                                            .key "pages"
+                                            .members
+                                            .key "revisions"
+                                            .nth 0
+                                            .key "*"
+                                            ._String  :: Maybe T.Text)
     case parseOnly redirectParser source of
-        Right link -> getWiki $ T.unpack link
+        Right link -> getWiki sess $ T.unpack link
         Left _ -> return (article,source)
 
 topLevelTemplates :: Wiki -> M.Map T.Text Wiki
@@ -169,9 +184,9 @@ findTemplate target = getFirst . foldMap (First .
         _ -> Nothing
     ) . wikiToList
 
-getConnected :: String -> IO (Either HistoryError (String,([String],[String])))
-getConnected target = runEitherT $ do
-    (cannonicalName,wiki) <- getWiki target
+getConnected :: Sess.Session -> String -> IO (Either HistoryError (String,([String],[String])))
+getConnected sess target = runEitherT $ do
+    (cannonicalName,wiki) <- getWiki sess target
     --The endOfInput won't work unless the wiki parser is improved.
     --See the result for French Thrid Republic for a hint.
     --parse <- EitherT $ return $ (_Left%~WikiParseError) $ parseOnly (wikiParser<*endOfInput) wiki
@@ -191,8 +206,9 @@ getConnected target = runEitherT $ do
     s <- failWith InfoboxInterpretationError $ conn 's' 
     return (cannonicalName,(p,s))
 
-runEitherT $ do
-    (cannonicalName,wiki) <- getWiki "Occupied France"
+test :: String -> IO ()
+test str = void $ Sess.withSession $ \sess -> runEitherT $ do
+    (cannonicalName,wiki) <- getWiki sess str
     parseResult <- parseWith (return "") (wikiParser<*endOfInput) wiki
     case parseResult of
         AP.Done unused parsed -> do
@@ -213,29 +229,29 @@ instance Show StateGraph where
                 "\n" ++ rest
             ) ("remaining:"++show todo) graph
 
-getNext :: StateGraph -> IO StateGraph
-getNext sg@(StateGraph _ []) = return sg
-getNext (StateGraph graph (next:stack)) =
+getNext :: Sess.Session -> StateGraph -> IO StateGraph
+getNext _ sg@(StateGraph _ []) = return sg
+getNext sess (StateGraph graph (next:stack)) =
     if M.member next graph
-    then getNext (StateGraph graph stack)
+    then getNext sess (StateGraph graph stack)
     else do
-        result <- getConnected next
+        result <- getConnected sess next
         case result of
             Left err -> do
                 print $ show err ++ " for " ++ next
-                getNext $ StateGraph graph stack
+                getNext sess $ StateGraph graph stack
             Right (name,(p,s)) -> do
                 if M.member name graph
-                then getNext $ StateGraph graph stack
+                then getNext sess $ StateGraph graph stack
                 else return $ StateGraph (M.insert name (p,s) graph) $ p ++ s ++ stack
 
 initialGraph = StateGraph M.empty ["Roman Empire"] 
 
 doIt :: Int -> StateGraph -> IO StateGraph
 doIt 0 graph = return $ graph
-doIt n graph = do
-    next <- getNext graph
+doIt n graph = Sess.withSession $ \sess ->  do
+    next <- getNext sess graph
     doIt (n-1) next
 
-main = print $ doIt 10 initialGraph
+main = print =<< doIt 10 initialGraph
 
