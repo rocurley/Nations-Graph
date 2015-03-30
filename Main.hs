@@ -164,7 +164,12 @@ redirectParser = do
     WikiLink link _ <- wikiLinkParser
     return link
 
-data HistoryError = HTTPError HttpException | JsonParseError | WikiParseError String | MissingInfobox | InfoboxInterpretationError deriving Show
+data HistoryError = HTTPError HttpException |
+                    JsonParseError |
+                    WikiParseError String |
+                    MissingInfobox |
+                    DoubleInfobox |
+                    InfoboxInterpretationError deriving Show
 
 getWiki :: Sess.Session -> String -> EitherT HistoryError IO (String,T.Text)
 getWiki sess article = do
@@ -196,6 +201,28 @@ findTemplate target = getFirst . foldMap (First .
         _ -> Nothing
     ) . wikiToList
 
+data Infobox = Infobox [String] [String]
+
+getInfobox :: Wiki -> Either HistoryError Infobox
+getInfobox wiki = case (findTemplate "infobox former country" wiki,
+                        findTemplate "infobox former subdivision" wiki) of
+        (Just _, Just _) -> Left DoubleInfobox
+        (Just (WikiTemplate title _ props), Nothing) -> note InfoboxInterpretationError $
+            Infobox <$> conn props 'p' <*> conn props 's'
+        (Nothing, Just (WikiTemplate title _ props)) -> note InfoboxInterpretationError $
+            Infobox <$> conn props 'p' <*> conn props 's'
+        (Nothing,Nothing) -> Left MissingInfobox
+        where
+            conn :: M.Map T.Text Wiki -> Char -> Maybe [String]
+            conn props ty = let
+                raw = mapMaybe (\ i -> M.lookup (T.pack $ ty:show i) props) [1..15]
+                in filter (not . null) <$> map (T.unpack . T.strip) <$> raw `forM` (\case
+                        WikiText text -> Just text
+                        WikiText text :> (WikiTemplate t _ _ :> _) -> if t == "!"
+                            then Just text
+                            else Nothing
+                        _ -> Nothing)
+
 getConnected :: Sess.Session -> String -> IO (Either HistoryError (String,([String],[String])))
 getConnected sess target = runEitherT $ do
     (cannonicalName,wiki) <- getWiki sess target
@@ -204,18 +231,7 @@ getConnected sess target = runEitherT $ do
     --parse <- EitherT $ return $ (_Left%~WikiParseError) $ parseOnly (wikiParser<*endOfInput) wiki
     parse <- EitherT $ return $ (_Left%~WikiParseError) $ parseOnly wikiParser wiki
     --lift $ print parse
-    infobox <- failWith MissingInfobox $ findTemplate "infobox former country" parse
-    let WikiTemplate title _ props = infobox
-    --lift $ traverse print $M.toList props
-    let conn ty = let
-            raw = mapMaybe (\ i -> M.lookup (T.pack $ ty:show i) props) [1..15]
-            in filter (not . null) <$> map (T.unpack . T.strip) <$> raw `forM` (\case
-                    WikiText text -> Just text
-                    WikiText text :> (WikiTemplate t _ _ :> _) -> Just text
-                    _ -> Nothing
-                )
-    p <- failWith InfoboxInterpretationError $ conn 'p' 
-    s <- failWith InfoboxInterpretationError $ conn 's' 
+    Infobox p s <- EitherT $ return $ getInfobox parse
     return (cannonicalName,(p,s))
 
 test :: String -> IO ()
@@ -318,7 +334,7 @@ toTGF (NationGraph graph synonyms _) = let
     in nodesStr ++ "#\n" ++ edgesStr
 
 main = do
-    result <- doIt 500 initialGraph
+    result <- doIt 10 initialGraph
     print result
     writeFile "./out.tgf" $ toTGF result
 --main = do
