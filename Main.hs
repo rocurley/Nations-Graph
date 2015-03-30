@@ -3,6 +3,7 @@
 {-# LANGUAGE TupleSections #-}
 
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.Monoid
 import Data.List
 import Data.Maybe
@@ -32,6 +33,12 @@ import Control.Exception
 import Network.HTTP.Client (HttpException)
 import Network.Wreq
 import qualified Network.Wreq.Session as Sess 
+
+--Todo
+--Underscores vs spaces
+--Non-ascii characters
+--Template:Infobox former subdivision
+
 
 wikiAPI = "http://en.wikipedia.org/w/api.php" :: String
 
@@ -223,40 +230,99 @@ test str = void $ Sess.withSession $ \sess -> runEitherT $ do
             lift $ print err
             lift $ print unused
 
-data StateGraph = StateGraph (M.Map String ([String],[String])) [String]
-instance Show StateGraph where
-    show (StateGraph graph todo) =
+data NationGraph = NationGraph (M.Map String ([String],[String])) (M.Map String String) [String]
+instance Show NationGraph where
+    show (NationGraph graph synonyms todo) =
         M.foldWithKey (\ k (p,s) rest -> k ++
                 "\n\tprecursors:" ++
                 concatMap ("\n\t\t"++) p ++
                 "\n\tsuccessors:" ++
                 concatMap ("\n\t\t"++) s ++
                 "\n" ++ rest
-            ) ("remaining:"++show todo) graph
+            ) ("remaining:"++show filteredTodo++"\nsynonyms:"++ show synonyms) graph
+        where filteredTodo = [bestName|name <- todo,
+                                let bestName = fromMaybe name $ M.lookup name synonyms,
+                                not $ bestName `M.member` graph]
 
-getNext :: Sess.Session -> StateGraph -> IO StateGraph
-getNext _ sg@(StateGraph _ []) = return sg
-getNext sess (StateGraph graph (next:stack)) =
-    if M.member next graph
-    then getNext sess (StateGraph graph stack)
+getNext :: Sess.Session -> NationGraph -> IO NationGraph
+getNext _ sg@(NationGraph _ _ []) = return sg
+getNext sess (NationGraph graph synonyms (next:stack)) =
+    if bestName `M.member` graph
+    then getNext sess (NationGraph graph synonyms stack)
     else do
-        result <- getConnected sess next
+        result <- getConnected sess bestName
         case result of
             Left err -> do
-                print $ show err ++ " for " ++ next
-                getNext sess $ StateGraph graph stack
+                putStrLn $ show err ++ " for " ++ next
+                getNext sess $ NationGraph graph synonyms stack
             Right (name,(p,s)) -> do
                 if M.member name graph
-                then getNext sess $ StateGraph graph stack
-                else return $ StateGraph (M.insert name (p,s) graph) $ p ++ s ++ stack
+                then getNext sess $ NationGraph graph newSynonyms stack
+                else return $ NationGraph (M.insert name (p,s) graph) newSynonyms $ p ++ s ++ stack
+                where newSynonyms =
+                        if next == name
+                        then synonyms
+                        else M.insert next name synonyms
+    where
+        bestName = fromMaybe next (M.lookup next synonyms)
 
-initialGraph = StateGraph M.empty ["Roman Empire"] 
+initialGraph = NationGraph M.empty M.empty ["Roman Empire"] 
 
-doIt :: Int -> StateGraph -> IO StateGraph
-doIt 0 graph = return $ graph
-doIt n graph = Sess.withSession $ \sess ->  do
-    next <- getNext sess graph
-    doIt (n-1) next
+doIt :: Int -> NationGraph -> IO NationGraph
+doIt n graph= Sess.withSession (\ sess -> doIt' sess n graph) where
+    doIt' :: Sess.Session -> Int -> NationGraph -> IO NationGraph
+    doIt' _ 0 graph = return $ graph
+    doIt' sess n graph = do
+        next <- getNext sess graph
+        doIt' sess (n-1) next
 
-main = print =<< doIt 10 initialGraph
+nationsList = ["Turkic Khaganate","Second Turkic Khaganate","Turgesh","Oghuz Yabgu State",
+               "Khazar Khaganate","Second Turkic Khaganate","Khazar Khaganate",
+               "Seljuq Empire","Kimek Khanate","Ghaznavid Empire","Buyid dynasty",
+               "Byzantine Empire","Kakuyids","Sultanate of R\251m","Anatolian beyliks",
+               "Ghurid Dynasty","Khwarezmian Empire","Ayyubid dynasty",
+               "Atabegs of Azerbaijan","Burid dynasty","Zengid dynasty","Danishmends",
+               "Artuqid dynasty","Saltukids","Danishmends","Mengujekids","Saltukids",
+               "Artukids","Anatolian Beyliks","Ottoman Empire","Ilkhanate",
+               "Armenian Kingdom of Cilicia","Byzantine Empire","Karamanids",
+               "Kingdom of Bosnia","Second Bulgarian Empire","Serbian Empire",
+               "Kingdom of Hungary (1000\8211\&1538)","Kingdom of Croatia (1102\8211\&1526)",
+               "Mamluk Sultanate (Cairo)","Hafsid dynasty",
+               "History of Malta under the Order of Saint John","Zayyanid dynasty",
+               "Empire of Trebizond","Despotate of the Morea",
+               "Government of the Grand National Assembly","First Hellenic Republic",
+               "Khedivate of Egypt","Condominium of Bosnia and Herzegovina",
+               "Principality of Serbia","Provisional Government of Albania",
+               "Kingdom of Romania","Principality of Bulgaria",
+               "British Cyprus (1914\8211\&1960)","Mandatory Iraq","Emirate of Diriyah",
+               "French Algeria","Mutawakkilite Kingdom of Yemen",
+               "French protectorate of Tunisia","Sheikhdom of Kuwait"]
+
+toTGF :: NationGraph -> String
+toTGF (NationGraph graph synonyms _) = let
+    cannonical :: String -> String
+    cannonical name = fromMaybe name $ M.lookup name synonyms
+    cannonicalGraph = traverse.both.traverse%~cannonical $ graph
+    nodes = M.foldWithKey (\ name (precursors,successors) acc -> S.unions
+        [S.singleton name,
+         S.fromList precursors,
+         S.fromList successors,
+         acc]) S.empty cannonicalGraph
+    numberedNodes = M.fromAscList $ zip (S.toAscList nodes) [1..]
+    indexOf = (`M.lookup` numberedNodes)
+    edges = ifoldMap (\ name (precursors,successors) ->
+        S.fromList [(indexOf p, indexOf name)|p<-precursors] <>
+        S.fromList [(indexOf name, indexOf s)|s<-successors]) cannonicalGraph
+    nodesStr = ifoldMap (\name i -> show i ++ " " ++ name ++ "\n") numberedNodes
+    edgesStr = foldMap (\(Just i,Just j) -> show i ++ " " ++ show j ++ "\n") edges
+    in nodesStr ++ "#\n" ++ edgesStr
+
+main = do
+    result <- doIt 500 initialGraph
+    print result
+    writeFile "./out.tgf" $ toTGF result
+--main = do
+--    print $ length nationsList
+--    Sess.withSession $ \ sess ->
+--        traverse (getConnected sess >=> print) $ Data.List.take 50 nationsList
 
