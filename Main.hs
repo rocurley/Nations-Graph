@@ -3,6 +3,8 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
 
+import Wiki
+
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Monoid
@@ -17,6 +19,7 @@ import Control.Monad
 import Control.Applicative as A
 
 import Control.Arrow
+import Data.Tuple
 
 import Data.Aeson
 import Data.Aeson.Lens
@@ -26,6 +29,7 @@ import Data.Aeson.Encode.Pretty
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import qualified Data.Text.Lazy.IO as LTIO
 import Data.Text.Encoding
 import qualified Data.ByteString.Lazy.Char8 as BSC
 
@@ -37,7 +41,13 @@ import Control.Exception
 
 import Network.HTTP.Client (HttpException)
 import Network.Wreq
-import qualified Network.Wreq.Session as Sess 
+import qualified Network.Wreq.Session as Sess
+
+import qualified Data.Graph.Inductive as G
+import Data.Graph.Inductive (Gr)
+import Data.GraphViz
+import Data.GraphViz.Printing hiding ((<>))
+import Data.GraphViz.Attributes.Complete
 
 --TODO:
 --Underscores vs spaces
@@ -45,135 +55,6 @@ import qualified Network.Wreq.Session as Sess
 --Include Dates
 
 wikiAPI = "http://en.wikipedia.org/w/api.php" :: String
-
-data Wiki = WikiText T.Text |
-            WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |
-            WikiLink T.Text [Wiki]|
-            WikiHTMLTag T.Text (M.Map T.Text T.Text)|
-            Wiki :> Wiki
-            deriving (Show)
-infixr :>
-wikiHead :: Wiki -> Wiki
-wikiHead (a :> b) = a
-wikiHead x = x
-
-wikiEmpty :: Wiki -> Bool
-wikiEmpty (WikiText t) = T.null t
-wikiEmpty _ = False
-
-wikiToList :: Wiki -> [Wiki]
-wikiToList (a :> b) = a : wikiToList b
-wikiToList x = [x]
-
-wikiFlatten :: Wiki -> Wiki
-wikiFlatten (WikiText a :> WikiText b :> rest) = wikiFlatten $ WikiText (a<>b) :> rest
-wikiFlatten (WikiText a :> WikiText b) = WikiText (a<>b)
-wikiFlatten (a :> b) = a :> wikiFlatten b
-wikiFlatten a = a
-
-nonDouble :: Char -> AP.Parser Char
-nonDouble c = do
-    AP.char c
-    peek <- AP.peekChar
-    case peek of
-        Just c' -> if c == c' then empty else return c
-        Nothing -> return c
-
-xmlName :: AP.Parser T.Text
-xmlName = do
-    c1 <- AP.letter <|> AP.char '_' <|> AP.char ':'
-    rest <- AP.takeWhile (\ c -> isLetter c || isDigit c || (c `elem` ".-_:"))
-    return $ T.cons c1 rest
-
-xmlAttribute :: AP.Parser (T.Text,T.Text)
-xmlAttribute = do
-    name <- xmlName
-    "=\""
-    value <- AP.takeWhile(\ c -> c /= '>' && not (isSpace c))
-    return (name,value)
-
-xmlTag :: AP.Parser (T.Text,M.Map T.Text T.Text)
-xmlTag = do
-    "<" <|> "</"
-    name <- xmlName
-    attributes <- A.many $ AP.takeWhile isSpace *> xmlAttribute
-    AP.takeWhile isSpace
-    ">"<|> "/>"
-    return (name, M.fromList attributes)
-
-xmlSpecificTag :: T.Text -> AP.Parser (T.Text,M.Map T.Text T.Text)
-xmlSpecificTag name = do
-    "<" <|> "</"
-    AP.string name
-    attributes <- A.many $ AP.takeWhile isSpace *> xmlAttribute
-    AP.takeWhile isSpace
-    ">"<|> "/>"
-    return (name, M.fromList attributes)
-
-wikiParser :: AP.Parser Wiki
-wikiParser = do
-    begin <- wikiHTMLTagParser <|>
-            wikiLinkParser <|>
-            wikiTemplateParser <|>
-            WikiText <$> ("<"<|>">") <|>
-            (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) empty "{}[]") <|>
-            (WikiText <$> AP.takeWhile (AP.notInClass "{}[]<>|"))
-    if wikiEmpty begin
-    then return begin
-    else (AP.endOfInput >> return begin) <|> do
-        next <- wikiParser
-        return $ if wikiEmpty next
-        then begin
-        else begin :> next
-
-wikiHTMLTagParser :: AP.Parser Wiki
-wikiHTMLTagParser = do
-    (name, attributes) <- xmlTag
-    return $ WikiHTMLTag name attributes
-    
-wikiLinkParser :: AP.Parser Wiki
-wikiLinkParser = do
-    "[["
-    first <- AP.takeWhile (\ c -> c /= '|' && c /= ']')
-    peek <- AP.peekChar
-    rest <- many $ "|" *> wikiParser
-    "]]"
-    return $ WikiLink first rest
-
-wikiTemplateNamedParameter :: AP.Parser (T.Text,Wiki)
-wikiTemplateNamedParameter = do
-    "|"
-    key <- AP.takeWhile (\ c -> c /='|' && c /= '=' && c /= '}')
-    "="
-    value <- wikiParser
-    return (T.strip key,value)
-
-wikiTemplateUnNamedParameter :: AP.Parser Wiki
-wikiTemplateUnNamedParameter = do
-    "|"
-    wikiParser
-
-wikiTemplateParser :: AP.Parser Wiki
-wikiTemplateParser = do
-    "{{"
-    title <- AP.takeWhile (\ c -> c /= '|' && c /= '}')
-    parameters <- A.many $ fmap Right wikiTemplateNamedParameter <|> fmap Left wikiTemplateUnNamedParameter
-    "}}"
-    return $ WikiTemplate (T.strip title) [x|Left x <- parameters] $ M.fromList [x|Right x <- parameters] 
-
-redirectParser :: AP.Parser T.Text
-redirectParser = do
-    "#REDIRECT"
-    A.many AP.space
-    WikiLink link _ <- wikiLinkParser
-    return link
-
-data HistoryError = HTTPError HttpException |
-                    JsonParseError |
-                    WikiParseError String |
-                    MissingInfobox |
-                    DoubleInfobox |
-                    InfoboxInterpretationError deriving Show
 
 getWiki :: Sess.Session -> String -> EitherT HistoryError IO (String,T.Text)
 getWiki sess article = do
@@ -195,55 +76,6 @@ getWiki sess article = do
     case AP.parseOnly redirectParser source of
         Right link -> getWiki sess $ T.unpack link
         Left _ -> return (articleRedirectStripped,source)
-
-topLevelTemplates :: Wiki -> M.Map T.Text Wiki
-topLevelTemplates wiki = M.fromList [(T.toLower title,WikiTemplate title uParams oParams)|WikiTemplate title uParams oParams <- wikiToList wiki ]
-
-findTemplate :: T.Text -> Wiki -> Maybe Wiki
-findTemplate target = getFirst . foldMap (First . 
-    \case 
-        t@(WikiTemplate title _ _) -> if T.toLower title == target then Just t else Nothing
-        _ -> Nothing
-    ) . wikiToList
-
-data Infobox = NationInfobox{
-                    _precursors :: [String],
-                    _successors :: [String]} |
-                SubdivisionInfobox{
-                    _precursors :: [String],
-                    _successors :: [String],
-                    _parentCandidates :: [String]} deriving Show
-
-precursors :: Lens Infobox Infobox [String] [String]
-precursors f (NationInfobox p s) = (\ p' -> NationInfobox p' s) <$> f p
-precursors f (SubdivisionInfobox p s pc) = (\ p' -> SubdivisionInfobox p' s pc) <$> f p
-successors :: Lens Infobox Infobox [String] [String]
-successors f (NationInfobox p s) = (NationInfobox p) <$> f s
-successors f (SubdivisionInfobox p s pc) = (\ s' -> SubdivisionInfobox p s' pc) <$> f s
-parentCandidates f (NationInfobox p s) =  pure (NationInfobox p s)
-parentCandidates f (SubdivisionInfobox p s pc) = (SubdivisionInfobox p s) <$> f pc
-
-getInfobox :: Wiki -> Either HistoryError Infobox
-getInfobox wiki = case (findTemplate "infobox former country" wiki,
-                        findTemplate "infobox former subdivision" wiki) of
-        (Just _, Just _) -> Left DoubleInfobox
-        (Just (WikiTemplate title _ props), Nothing) -> note InfoboxInterpretationError $
-            NationInfobox <$> conn props 'p' <*> conn props 's'
-        (Nothing, Just (WikiTemplate title _ props)) -> note InfoboxInterpretationError $
-            SubdivisionInfobox <$> conn props 'p' <*> conn props 's'<*> pure (parents props)
-        (Nothing,Nothing) -> Left MissingInfobox
-        where
-            conn :: M.Map T.Text Wiki -> Char -> Maybe [String]
-            conn props ty = let
-                raw = mapMaybe (\ i -> M.lookup (T.pack $ ty:show i) props) [1..15]
-                in filter (not . null) <$> map (T.unpack . T.strip) <$> raw `forM` (\case
-                        WikiText text -> Just text
-                        WikiText text :> (WikiTemplate t _ _ :> _) -> if t == "!"
-                            then Just text
-                            else Nothing
-                        _ -> Nothing)
-            parents :: M.Map T.Text Wiki -> [String]
-            parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to wikiToList]
 
 getConnected :: Sess.Session -> String -> IO (Either HistoryError (String,Infobox))
 getConnected sess target = runEitherT $ do
@@ -267,7 +99,6 @@ test str = void $ Sess.withSession $ \sess -> runEitherT $ do
         AP.Fail unused contexts err -> do
             lift $ print err
             lift $ print unused
-
 
 type Nation = String --Denotes the (non-redirect) name of a nation.
 
@@ -350,6 +181,12 @@ getNext sess (NationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) 
 
 initialGraph = NationGraph M.empty M.empty M.empty ["Roman Empire"] 
 
+--All of this is pretty terrible. What is needed is to convert the graph into some
+--standard representation (probably that of FGL) and have everything come from there.
+--In particular, this needs to support in the future more information for a nation
+--than just the name.
+
+
 doIt :: Int -> NationGraph -> IO NationGraph
 doIt n graph= Sess.withSession (\ sess -> doIt' sess n graph) where
     doIt' :: Sess.Session -> Int -> NationGraph -> IO NationGraph
@@ -358,7 +195,7 @@ doIt n graph= Sess.withSession (\ sess -> doIt' sess n graph) where
         next <- getNext sess graph
         doIt' sess (n-1) next
 
-nodesAndEdgesSets :: NationGraph -> (S.Set String,S.Set (String,String))
+nodesAndEdgesSets :: NationGraph -> (S.Set Nation,S.Set (Nation,Nation))
 nodesAndEdgesSets nationsGraph= let
     graph = toGraph nationsGraph
     nodes = M.foldWithKey (\ name (precursors,successors) acc -> S.unions
@@ -371,6 +208,18 @@ nodesAndEdgesSets nationsGraph= let
         S.map (name,) successors) graph
     in (nodes,edges)
 
+toUnlabeledTGF :: NationGraph -> (String,(M.Map Int Nation,S.Set (Int,Int))
+toTGF nationGraph = let
+    (nodes,edges) = nodesAndEdgesSets nationGraph
+    numberedNodes = M.fromAscList $ zip (S.toAscList nodes) [1..]
+    indexOf = (`M.lookup` numberedNodes)
+    numberedEdges = S.map (indexOf***indexOf) edges
+    nodesStr = ifoldMap (\name i -> show i ++ "\n") numberedNodes
+    edgesStr = foldMap (\(Just i,Just j) -> show i ++ " " ++ show j ++ "\n") numberedEdges
+    tgf = nodesStr ++ "#\n" ++ edgesStr
+    swappedNumberedNodes = M.fromList [(i,nation) |(nation,i)  <- M.toList] 
+    in (tgf,(swappedNumberedNodes,numberedEdges))
+
 toTGF :: NationGraph -> String
 toTGF nationGraph = let
     (nodes,edges) = nodesAndEdgesSets nationGraph
@@ -379,7 +228,31 @@ toTGF nationGraph = let
     numberedEdges = S.map (indexOf***indexOf) edges
     nodesStr = ifoldMap (\name i -> show i ++ " " ++ name ++ "\n") numberedNodes
     edgesStr = foldMap (\(Just i,Just j) -> show i ++ " " ++ show j ++ "\n") numberedEdges
-    in nodesStr ++ "#\n" ++ edgesStr
+    tgf = nodesStr ++ "#\n" ++ edgesStr
+
+toGV :: NationGraph -> DotGraph String
+toGV nationGraph = let
+    (nodes,edges) = nodesAndEdgesSets nationGraph
+    gvNodes = map (\ n -> (n,n)) $ S.toList nodes
+    gvEdges = map (\ (p,s) -> (p,s,())) $ S.toList edges
+    gvParams = nonClusteredParams{globalAttributes =
+        [
+            GraphAttrs [Splines SplineEdges],
+            EdgeAttrs [HeadPort $ CompassPoint North,
+                    TailPort $ CompassPoint South],
+            NodeAttrs [Shape $ BoxShape]
+        ]}
+    in graphElemsToDot gvParams gvNodes gvEdges
+
+toFGL :: NationGraph -> Gr Nation ()
+toFGL nationGraph = let
+    (nodes,edges) = nodesAndEdgesSets nationGraph
+    numberedNodesAscList = zip (S.toAscList nodes) [1..]
+    fglNodes = map swap numberedNodesAscList
+    numberedNodes = M.fromAscList numberedNodesAscList
+    indexOf = (numberedNodes M.!)
+    fglEdges = map (\ (p,s) -> (indexOf p,indexOf s,())) $ S.toList edges
+    in G.mkGraph fglNodes fglEdges
 
 instance ToJSON NationGraph where
     toJSON nationGraph =  let
@@ -400,9 +273,6 @@ instance ToJSON NationGraph where
 main = do
     result <- doIt 10 initialGraph
     print result
-    BSC.writeFile "./out.json" $ encodePretty result
---main = do
---    print $ length nationsList
---    Sess.withSession $ \ sess ->
---        traverse (getConnected sess >=> print) $ Data.List.take 50 nationsList
-
+    --runGraphviz (toGV result) Svg "./out.svg"
+    LTIO.writeFile "out.dot" $ renderDot $ toDot $ toGV result
+    --BSC.writeFile "./out.json" $ encodePretty result

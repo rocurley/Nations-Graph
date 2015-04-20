@@ -17,8 +17,8 @@ cabal-version:       >=1.10
 
 executable Nations-Graph
   main-is:             Main.hs
-  -- other-modules:       
+  -- other-modules:
   -- other-extensions:    
-  build-depends:       base >=4.7 && <4.8, HTTP >=4000.2 && <4000.3, aeson >=0.7 && <0.8, lens-aeson, lens >=4.7 && <4.8, text >=1.1 && <1.2, transformers >=0.3 && <0.4, mtl >=2.1 && <2.2, attoparsec >=0.11 && <0.12, containers >=0.5 && <0.6, either >=4.3 && <4.4, errors >=1.4 && <1.5, bytestring >=0.10 && <0.11, wreq, lens, http-client, aeson-pretty
+  build-depends:       base >=4.7 && <4.8, HTTP >=4000.2 && <4000.3, aeson >=0.7 && <0.8, lens-aeson, lens >=4.7 && <4.8, text >=1.1 && <1.2, transformers >=0.3 && <0.4, mtl >=2.1 && <2.2, attoparsec >=0.11 && <0.12, containers >=0.5 && <0.6, either >=4.3 && <4.4, errors >=1.4 && <1.5, bytestring >=0.10 && <0.11, wreq, lens, http-client, aeson-pretty, fgl, graphviz
   -- hs-source-dirs:      
   default-language:    Haskell2010
