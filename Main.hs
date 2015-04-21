@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 import Wiki
 
@@ -195,9 +196,9 @@ doIt n graph= Sess.withSession (\ sess -> doIt' sess n graph) where
         next <- getNext sess graph
         doIt' sess (n-1) next
 
-nodesAndEdgesSets :: NationGraph -> (S.Set Nation,S.Set (Nation,Nation))
-nodesAndEdgesSets nationsGraph= let
-    graph = toGraph nationsGraph
+toFGL :: NationGraph -> Gr Nation ()
+toFGL nationGraph = let
+    graph = toGraph nationGraph
     nodes = M.foldWithKey (\ name (precursors,successors) acc -> S.unions
         [S.singleton name,
          precursors,
@@ -206,47 +207,6 @@ nodesAndEdgesSets nationsGraph= let
     edges = ifoldMap (\ name (precursors,successors) ->
         S.map (,name) precursors <>
         S.map (name,) successors) graph
-    in (nodes,edges)
-
-toUnlabeledTGF :: NationGraph -> (String,(M.Map Int Nation,S.Set (Int,Int))
-toTGF nationGraph = let
-    (nodes,edges) = nodesAndEdgesSets nationGraph
-    numberedNodes = M.fromAscList $ zip (S.toAscList nodes) [1..]
-    indexOf = (`M.lookup` numberedNodes)
-    numberedEdges = S.map (indexOf***indexOf) edges
-    nodesStr = ifoldMap (\name i -> show i ++ "\n") numberedNodes
-    edgesStr = foldMap (\(Just i,Just j) -> show i ++ " " ++ show j ++ "\n") numberedEdges
-    tgf = nodesStr ++ "#\n" ++ edgesStr
-    swappedNumberedNodes = M.fromList [(i,nation) |(nation,i)  <- M.toList] 
-    in (tgf,(swappedNumberedNodes,numberedEdges))
-
-toTGF :: NationGraph -> String
-toTGF nationGraph = let
-    (nodes,edges) = nodesAndEdgesSets nationGraph
-    numberedNodes = M.fromAscList $ zip (S.toAscList nodes) [1..]
-    indexOf = (`M.lookup` numberedNodes)
-    numberedEdges = S.map (indexOf***indexOf) edges
-    nodesStr = ifoldMap (\name i -> show i ++ " " ++ name ++ "\n") numberedNodes
-    edgesStr = foldMap (\(Just i,Just j) -> show i ++ " " ++ show j ++ "\n") numberedEdges
-    tgf = nodesStr ++ "#\n" ++ edgesStr
-
-toGV :: NationGraph -> DotGraph String
-toGV nationGraph = let
-    (nodes,edges) = nodesAndEdgesSets nationGraph
-    gvNodes = map (\ n -> (n,n)) $ S.toList nodes
-    gvEdges = map (\ (p,s) -> (p,s,())) $ S.toList edges
-    gvParams = nonClusteredParams{globalAttributes =
-        [
-            GraphAttrs [Splines SplineEdges],
-            EdgeAttrs [HeadPort $ CompassPoint North,
-                    TailPort $ CompassPoint South],
-            NodeAttrs [Shape $ BoxShape]
-        ]}
-    in graphElemsToDot gvParams gvNodes gvEdges
-
-toFGL :: NationGraph -> Gr Nation ()
-toFGL nationGraph = let
-    (nodes,edges) = nodesAndEdgesSets nationGraph
     numberedNodesAscList = zip (S.toAscList nodes) [1..]
     fglNodes = map swap numberedNodesAscList
     numberedNodes = M.fromAscList numberedNodesAscList
@@ -254,25 +214,49 @@ toFGL nationGraph = let
     fglEdges = map (\ (p,s) -> (indexOf p,indexOf s,())) $ S.toList edges
     in G.mkGraph fglNodes fglEdges
 
-instance ToJSON NationGraph where
-    toJSON nationGraph =  let
-        (nodes,edges) = nodesAndEdgesSets nationGraph
-        jsonNodes = toJSON $ map (\ name -> 
+toUnlabeledTGF :: Gr Nation () -> String
+toUnlabeledTGF graph = let
+    nodesStr = foldMap (\(i, name) -> (++) $ show i ++"\n") $ G.labNodes graph
+    edgesStr = foldMap (\(i, j, _) -> (++) $ show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
+    in nodesStr $ ("#\n"++) $ edgesStr []
+
+toTGF :: Gr Nation () -> String
+toTGF graph = let
+    nodesStr = foldMap (\(i, name) -> show i ++ " " ++ name ++ "\n") $ G.labNodes graph
+    edgesStr = foldMap (\(i, j, _) -> show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
+    in nodesStr ++ "#\n" ++ edgesStr
+
+toGV :: Gr Nation () -> DotGraph G.Node
+toGV graph = let
+    gvParams = nonClusteredParams{globalAttributes =
+        [
+            GraphAttrs [Splines SplineEdges],
+            EdgeAttrs [HeadPort $ CompassPoint North,
+                    TailPort $ CompassPoint South],
+            NodeAttrs [Shape $ BoxShape]
+        ]}
+    in graphToDot gvParams graph
+
+instance ToJSON (Gr Nation ()) where
+    toJSON graph =  let
+        jsonNodes = toJSON $ map (\ (i,name) -> 
                 object [
-                    ("id",toJSON name),
+                    ("id", toJSON i),
                     ("label", toJSON name)
                 ]
-            )$ S.toList nodes
-        jsonEdges = toJSON $ map (\ (p,s) -> 
+            ) $ G.labNodes graph
+        jsonEdges = toJSON $ map (\ (p,s,_) -> 
                 object [
-                    ("source",toJSON p),
-                    ("target",toJSON s)
+                    ("source", toJSON p),
+                    ("target", toJSON s)
                 ]
-            )$ S.toList edges
+            ) $ G.labEdges graph
         in object [("nodes", jsonNodes),("edges", jsonEdges)]
 main = do
     result <- doIt 10 initialGraph
     print result
-    --runGraphviz (toGV result) Svg "./out.svg"
-    LTIO.writeFile "out.dot" $ renderDot $ toDot $ toGV result
-    --BSC.writeFile "./out.json" $ encodePretty result
+    let fglResult = toFGL result
+    runGraphviz (toGV fglResult) Svg "./out.svg"
+    --LTIO.writeFile "out.dot" $ renderDot $ toDot $ toGV result
+    writeFile "./out.tgf" $ toTGF fglResult
+    BSC.writeFile "./out.json" $ encodePretty fglResult
