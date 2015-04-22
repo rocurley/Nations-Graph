@@ -3,12 +3,14 @@
 {-# LANGUAGE TupleSections #-}
 
 module Wiki (
+Wiki(..),
 redirectParser,
 Infobox(..),
 HistoryError(..),
 wikiParser,
 getInfobox,
 wikiToList,
+findTemplate,
 ) where
 
 import qualified Data.Map as M
@@ -18,6 +20,8 @@ import Data.List
 import Data.Maybe
 import Data.Char
 import Data.Foldable (foldMap)
+
+import Safe
 
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans
@@ -31,7 +35,6 @@ import Data.Aeson
 import Data.Aeson.Lens
 import Control.Lens
 import Data.Aeson.Encode
-import Data.Aeson.Encode.Pretty
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -178,9 +181,19 @@ redirectParser = do
     WikiLink link _ <- wikiLinkParser
     return link
 
+yearParser :: AP.Parser Int
+yearParser = do
+    digits <- many $ AP.satisfy isDigit
+    absYear <- maybe (fail "Year did not read as Int") return $ readMay digits 
+    (AP.endOfInput >> return absYear) <|> do
+        many (AP.satisfy isSeparator)
+        "BC"
+        AP.endOfInput
+        return $ -absYear
 
-topLevelTemplates :: Wiki -> M.Map T.Text Wiki
-topLevelTemplates wiki = M.fromList [(T.toLower title,WikiTemplate title uParams oParams)|WikiTemplate title uParams oParams <- wikiToList wiki ]
+readYearMay :: T.Text -> Maybe Int
+readYearMay = either (const Nothing) Just .
+    AP.parseOnly yearParser . T.strip
 
 findTemplate :: T.Text -> Wiki -> Maybe Wiki
 findTemplate target = getFirst . foldMap (First . 
@@ -190,32 +203,46 @@ findTemplate target = getFirst . foldMap (First .
     ) . wikiToList
 
 data Infobox = NationInfobox{
+                    _name :: String,
+                    _start_year :: Maybe  Int,
+                    _end_year :: Maybe Int,
                     _precursors :: [String],
                     _successors :: [String]} |
                 SubdivisionInfobox{
+                    _name :: String,
+                    _start_year :: Maybe Int,
+                    _end_year :: Maybe Int,
                     _precursors :: [String],
                     _successors :: [String],
                     _parentCandidates :: [String]} deriving Show
 
-precursors :: Lens Infobox Infobox [String] [String]
-precursors f (NationInfobox p s) = (\ p' -> NationInfobox p' s) <$> f p
-precursors f (SubdivisionInfobox p s pc) = (\ p' -> SubdivisionInfobox p' s pc) <$> f p
-
-successors :: Lens Infobox Infobox [String] [String]
-successors f (NationInfobox p s) = (NationInfobox p) <$> f s
-successors f (SubdivisionInfobox p s pc) = (\ s' -> SubdivisionInfobox p s' pc) <$> f s
-
-parentCandidates f (NationInfobox p s) =  pure (NationInfobox p s)
-parentCandidates f (SubdivisionInfobox p s pc) = (SubdivisionInfobox p s) <$> f pc
+propLookup :: T.Text -> M.Map T.Text Wiki -> Maybe T.Text
+propLookup prop props = case M.lookup prop props of
+    Just (WikiText x)   -> Just $ x
+    Just (WikiLink x _) -> Just $ x
+    _ -> Nothing
 
 getInfobox :: Wiki -> Either HistoryError Infobox
 getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> Left DoubleInfobox
-        (Just (WikiTemplate title _ props), Nothing) -> note InfoboxInterpretationError $
-            NationInfobox <$> conn props 'p' <*> conn props 's'
-        (Nothing, Just (WikiTemplate title _ props)) -> note InfoboxInterpretationError $
-            SubdivisionInfobox <$> conn props 'p' <*> conn props 's'<*> pure (parents props)
+        (Just (WikiTemplate title _ props), Nothing) ->
+            note InfoboxInterpretationError $
+                NationInfobox <$>
+                name props <*>
+                pure (startYear props) <*>
+                pure (endYear props) <*>
+                conn props 'p' <*>
+                conn props 's'
+        (Nothing, Just (WikiTemplate title _ props)) ->
+            note InfoboxInterpretationError $
+                SubdivisionInfobox <$>
+                name props <*>
+                pure (startYear props) <*>
+                pure (endYear props) <*>
+                conn props 'p' <*>
+                conn props 's'<*>
+                pure (parents props)
         (Nothing,Nothing) -> Left MissingInfobox
         where
             conn :: M.Map T.Text Wiki -> Char -> Maybe [String]
@@ -229,3 +256,8 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         _ -> Nothing)
             parents :: M.Map T.Text Wiki -> [String]
             parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to wikiToList]
+            name = fmap (T.unpack . T.strip) . propLookup "conventional_long_name"
+            startYear :: M.Map T.Text Wiki -> Maybe Int
+            startYear = readYearMay <=< propLookup "year_start"
+            endYear :: M.Map T.Text Wiki -> Maybe Int
+            endYear = readYearMay <=< propLookup "year_end"

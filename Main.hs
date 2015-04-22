@@ -92,7 +92,7 @@ getConnected sess target = runEitherT $ do
 test :: String -> IO ()
 test str = void $ Sess.withSession $ \sess -> runEitherT $ do
     (cannonicalName,wiki) <- getWiki sess str
-    parseResult <- AP.parseWith (return "") (wikiParser<*AP.endOfInput) wiki
+    parseResult <- AP.parseWith (return "") wikiParser wiki
     case parseResult of
         AP.Done unused parsed -> do
             lift $ print $ last $ wikiToList parsed
@@ -101,110 +101,155 @@ test str = void $ Sess.withSession $ \sess -> runEitherT $ do
             lift $ print err
             lift $ print unused
 
-type Nation = String --Denotes the (non-redirect) name of a nation.
+type NationKey = String
+data NationNode = NationNode
+    {
+        _nationValue :: NationValue,
+        _nationPrecursors :: S.Set NationKey,
+        _nationSuccessors :: S.Set NationKey
+    }
+data NationValue = NationValue
+    {
+        _name :: String,
+        _nationStartYear :: Maybe Int,
+        _nationEndYear :: Maybe Int
+    }
 
-data NationGraph = NationGraph {
-    _nations :: (M.Map Nation ([String],[String])),
-    _subdivisions :: (M.Map String ([String],[String],[String])),
-    _synonyms :: (M.Map String Nation),
+--The one on the right is considered cannonical, we're just grabbing
+--p and s from the left one.
+addEdges :: NationNode -> NationNode -> NationNode
+addEdges (NationNode _ p1 s1)  (NationNode val p2 s2) =
+        NationNode val (p1<>p2) (s1<>s2)
+
+data SubdivisionNode = SubdivisionNode
+    {
+        _subdivisionValue :: NationValue,
+        _subdivisionPossibleParents :: [NationKey],
+        _subdivisionPrecursors :: S.Set NationKey,
+        _subdivisionSuccessors :: S.Set NationKey
+    }
+
+data BuildingNationGraph = BuildingNationGraph {
+    _nations :: (M.Map NationKey NationNode),
+    _subdivisions :: (M.Map NationKey SubdivisionNode),
+    _synonyms :: (M.Map String NationKey),
     _todo :: [String]}
 
-toGraph :: NationGraph -> M.Map Nation (S.Set Nation,S.Set Nation)
-toGraph (NationGraph nationsGraph subdivisionsGraph synonyms _) = let
-    strictCannonicalNationName :: String -> Maybe Nation
+toAdjacency :: BuildingNationGraph -> M.Map NationKey NationNode
+toAdjacency (BuildingNationGraph nations subdivisions synonyms _) = let
+    strictCannonicalNationName :: String -> Maybe NationKey
     strictCannonicalNationName name =
-        if name `M.member` nationsGraph
+        if name `M.member` nations
         then Just name
         else M.lookup name synonyms
 
-    subdivisionNations = M.mapWithKey  (\ name (_,_,possibleParent) ->
+    subdivisionKeyToNationKey :: M.Map String NationKey
+    subdivisionKeyToNationKey = M.mapWithKey  (\ name (SubdivisionNode _ possibleParents _ _) ->
             fromMaybe name $ getFirst $ -- Default to the subdivision name
-                foldMap (First . strictCannonicalNationName) possibleParent
-        ) subdivisionsGraph
+                foldMap (First . strictCannonicalNationName) possibleParents
+        ) subdivisions
 
-    cannonicalNationName :: String -> Nation
+    cannonicalNationName :: String -> NationKey
     cannonicalNationName name = let
         deSynonymized = fromMaybe name $ M.lookup name synonyms
-        in fromMaybe deSynonymized $ M.lookup deSynonymized subdivisionNations
+        in fromMaybe deSynonymized $ M.lookup deSynonymized subdivisionKeyToNationKey
 
-    cannonicalNationsGraph = traverse.both%~S.fromList $
-        traverse.both.traverse%~cannonicalNationName $ nationsGraph
-    cannonicalSubdivisionsGraph =  traverse.both%~S.fromList $
-        M.mapKeys cannonicalNationName $
-        traverse%~(\ (p,s,_) -> both.traverse%~cannonicalNationName $ (p,s)) $
-        subdivisionsGraph
-    in M.unionWith mappend cannonicalNationsGraph cannonicalSubdivisionsGraph
+    cannonicalNationsGraph = 
+        (\ (NationNode val p s) -> NationNode val
+            (S.map cannonicalNationName p) (S.map cannonicalNationName s)) <$>
+        nations
+    in M.foldrWithKey (\ subdivisionName (SubdivisionNode nationValue _ p s) acc ->
+            M.insertWith addEdges
+                (cannonicalNationName subdivisionName)
+                (NationNode nationValue p s)
+                acc
+        ) cannonicalNationsGraph subdivisions
 
-
-instance Show NationGraph where
-    show ng@(NationGraph _ _ synonyms todo) =
-        M.foldWithKey (\ k (p,s) rest -> k ++
-                "\n\tprecursors:" ++
+instance Show BuildingNationGraph where
+    show ng@(BuildingNationGraph _ _ synonyms todo) =
+        M.foldWithKey (\ k (NationNode (NationValue n sy ey) p s) rest -> k ++
+                "\n\tname:\n\t\t" ++ n ++
+                "\n\tlifetime:\n\t\t(" ++ maybe "?" show sy ++ " to " ++ maybe "?" show ey ++
+                ")\n\tprecursors:" ++
                 foldMap ("\n\t\t"++) p ++
                 "\n\tsuccessors:" ++
                 foldMap ("\n\t\t"++) s ++
                 "\n" ++ rest
             ) ("remaining:"++show filteredTodo++"\nsynonyms:"++ show synonyms) graph
         where
-            graph = toGraph ng 
+            graph = toAdjacency ng 
             filteredTodo = [bestName|name <- todo,
                                 let bestName = fromMaybe name $ M.lookup name synonyms,
                                 not $ bestName `M.member` graph]
 
-getNext :: Sess.Session -> NationGraph -> IO NationGraph
-getNext _ ng@(NationGraph _ _ _ []) = return ng
-getNext sess (NationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) =
+getNext :: Sess.Session -> BuildingNationGraph -> IO BuildingNationGraph
+getNext _ ng@(BuildingNationGraph _ _ _ []) = return ng
+getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) =
     if bestName `M.member` nationsGraph || bestName `M.member` subdivisionsGraph 
-    then getNext sess (NationGraph nationsGraph subdivisionsGraph synonyms stack)
+    then getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack)
     else do
         result <- getConnected sess bestName
         case result of
             Left err -> do
                 putStrLn $ show err ++ " for " ++ next
-                getNext sess $ NationGraph nationsGraph subdivisionsGraph synonyms stack
+                getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
             Right (name, infobox)-> do
                 if M.member name nationsGraph || M.member name subdivisionsGraph
-                then getNext sess $ NationGraph nationsGraph subdivisionsGraph  newSynonyms stack
+                then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph  newSynonyms stack
                 else return $ insert infobox
                 where newSynonyms =
                         if next == name
                         then synonyms
                         else M.insert next name synonyms
-                      insert :: Infobox -> NationGraph
-                      insert (NationInfobox p s) = NationGraph
-                        (M.insert name (p,s) nationsGraph)
-                            subdivisionsGraph synonyms (p++s++stack)
-                      insert (SubdivisionInfobox p s pc) = NationGraph 
-                        nationsGraph (M.insert name (p,s,pc) subdivisionsGraph) 
+                      insert :: Infobox -> BuildingNationGraph
+                      insert (NationInfobox n sy ey p s) = BuildingNationGraph
+                        (M.insert
+                            name 
+                            (NationNode
+                                (NationValue n sy ey)
+                                (S.fromList p)
+                                (S.fromList s)
+                            )
+                            nationsGraph
+                        )
+                        subdivisionsGraph
+                        synonyms
+                        (p++s++stack)
+                      insert (SubdivisionInfobox n sy ey p s pc) = BuildingNationGraph 
+                        nationsGraph
+                        (M.insert
+                            name
+                            (SubdivisionNode
+                                (NationValue n sy ey)
+                                pc
+                                (S.fromList p)
+                                (S.fromList s)
+                            )
+                            subdivisionsGraph
+                        ) 
                         synonyms (p++s++stack)
     where
         bestName = fromMaybe next (M.lookup next synonyms)
 
-initialGraph = NationGraph M.empty M.empty M.empty ["Roman Empire"] 
+initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Roman Empire"] 
 
---All of this is pretty terrible. What is needed is to convert the graph into some
---standard representation (probably that of FGL) and have everything come from there.
---In particular, this needs to support in the future more information for a nation
---than just the name.
-
-
-doIt :: Int -> NationGraph -> IO NationGraph
+doIt :: Int -> BuildingNationGraph -> IO BuildingNationGraph
 doIt n graph= Sess.withSession (\ sess -> doIt' sess n graph) where
-    doIt' :: Sess.Session -> Int -> NationGraph -> IO NationGraph
+    doIt' :: Sess.Session -> Int -> BuildingNationGraph -> IO BuildingNationGraph
     doIt' _ 0 graph = return $ graph
     doIt' sess n graph = do
         next <- getNext sess graph
         doIt' sess (n-1) next
 
-toFGL :: NationGraph -> Gr Nation ()
+toFGL :: BuildingNationGraph -> Gr NationKey ()
 toFGL nationGraph = let
-    graph = toGraph nationGraph
-    nodes = M.foldWithKey (\ name (precursors,successors) acc -> S.unions
+    graph = toAdjacency nationGraph
+    nodes = M.foldWithKey (\ name (NationNode val precursors successors) acc -> S.unions
         [S.singleton name,
          precursors,
          successors,
          acc]) S.empty graph
-    edges = ifoldMap (\ name (precursors,successors) ->
+    edges = ifoldMap (\ name (NationNode val precursors successors) ->
         S.map (,name) precursors <>
         S.map (name,) successors) graph
     numberedNodesAscList = zip (S.toAscList nodes) [1..]
@@ -214,19 +259,19 @@ toFGL nationGraph = let
     fglEdges = map (\ (p,s) -> (indexOf p,indexOf s,())) $ S.toList edges
     in G.mkGraph fglNodes fglEdges
 
-toUnlabeledTGF :: Gr Nation () -> String
+toUnlabeledTGF :: Gr NationKey () -> String
 toUnlabeledTGF graph = let
     nodesStr = foldMap (\(i, name) -> (++) $ show i ++"\n") $ G.labNodes graph
     edgesStr = foldMap (\(i, j, _) -> (++) $ show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
     in nodesStr $ ("#\n"++) $ edgesStr []
 
-toTGF :: Gr Nation () -> String
+toTGF :: Gr NationKey () -> String
 toTGF graph = let
     nodesStr = foldMap (\(i, name) -> show i ++ " " ++ name ++ "\n") $ G.labNodes graph
     edgesStr = foldMap (\(i, j, _) -> show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
     in nodesStr ++ "#\n" ++ edgesStr
 
-toGV :: Gr Nation () -> DotGraph G.Node
+toGV :: Gr NationKey () -> DotGraph G.Node
 toGV graph = let
     gvParams = nonClusteredParams{globalAttributes =
         [
@@ -237,7 +282,7 @@ toGV graph = let
         ]}
     in graphToDot gvParams graph
 
-instance ToJSON (Gr Nation ()) where
+instance ToJSON (Gr NationKey ()) where
     toJSON graph =  let
         jsonNodes = toJSON $ map (\ (i,name) -> 
                 object [
@@ -252,6 +297,12 @@ instance ToJSON (Gr Nation ()) where
                 ]
             ) $ G.labEdges graph
         in object [("nodes", jsonNodes),("edges", jsonEdges)]
+
+--main = void $ Sess.withSession $ \sess -> runEitherT $ do
+--    (cannonicalName,wiki) <- getWiki sess "Etruscan civilization"
+--    parse <- EitherT $ return $ (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki
+--    let Just (WikiTemplate title _ props) = findTemplate "infobox former country" parse
+--    lift $ print props
 main = do
     result <- doIt 10 initialGraph
     print result
