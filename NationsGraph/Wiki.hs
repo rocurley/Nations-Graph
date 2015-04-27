@@ -2,69 +2,34 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 
-module Wiki (
-Wiki(..),
-redirectParser,
-Infobox(..),
-HistoryError(..),
-wikiParser,
-getInfobox,
-wikiToList,
-findTemplate,
+module NationsGraph.Wiki (
+    redirectParser,
+    wikiParser,
+    getInfobox,
+    wikiToList,
+    findTemplate,
 ) where
 
+import NationsGraph.Types
+
 import qualified Data.Map as M
-import qualified Data.Set as S
 import Data.Monoid
-import Data.List
 import Data.Maybe
 import Data.Char
 import Data.Foldable (foldMap)
 
-import Safe
-
-import Control.Monad.Trans.Maybe
-import Control.Monad.Trans
 import Control.Monad
 import Control.Applicative as A
 
-import Control.Arrow
-import Data.Tuple
-
-import Data.Aeson
-import Data.Aeson.Lens
 import Control.Lens
-import Data.Aeson.Encode
 
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-import Data.Text.Encoding
-import qualified Data.ByteString.Lazy.Char8 as BSC
 
 import qualified Data.Attoparsec.Text as AP
 
-import Control.Monad.Trans.Either
 import Control.Error.Util
-import Control.Exception
 
-import Network.HTTP.Client (HttpException)
-import Network.Wreq
-import qualified Network.Wreq.Session as Sess
-
-data Wiki = WikiText T.Text |
-            WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |
-            WikiLink T.Text [Wiki]|
-            WikiHTMLTag T.Text (M.Map T.Text T.Text)|
-            Wiki :> Wiki
-            deriving (Show)
-infixr :>
-
-data HistoryError = HTTPError HttpException |
-                    JsonParseError |
-                    WikiParseError String |
-                    MissingInfobox |
-                    DoubleInfobox |
-                    InfoboxInterpretationError deriving Show
+import Safe
 
 wikiHead :: Wiki -> Wiki
 wikiHead (a :> b) = a
@@ -89,7 +54,7 @@ nonDouble c = do
     AP.char c
     peek <- AP.peekChar
     case peek of
-        Just c' -> if c == c' then empty else return c
+        Just c' -> if c == c' then A.empty else return c
         Nothing -> return c
 
 xmlName :: AP.Parser T.Text
@@ -129,7 +94,7 @@ wikiParser = do
             wikiLinkParser <|>
             wikiTemplateParser <|>
             WikiText <$> ("<"<|>">") <|>
-            (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) empty "{}[]") <|>
+            (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) A.empty "{}[]") <|>
             (WikiText <$> AP.takeWhile (AP.notInClass "{}[]<>|"))
     if wikiEmpty begin
     then return begin
@@ -202,24 +167,12 @@ findTemplate target = getFirst . foldMap (First .
         _ -> Nothing
     ) . wikiToList
 
-data Infobox = NationInfobox{
-                    _name :: String,
-                    _start_year :: Maybe  Int,
-                    _end_year :: Maybe Int,
-                    _precursors :: [String],
-                    _successors :: [String]} |
-                SubdivisionInfobox{
-                    _name :: String,
-                    _start_year :: Maybe Int,
-                    _end_year :: Maybe Int,
-                    _precursors :: [String],
-                    _successors :: [String],
-                    _parentCandidates :: [String]} deriving Show
-
 propLookup :: T.Text -> M.Map T.Text Wiki -> Maybe T.Text
 propLookup prop props = case M.lookup prop props of
     Just (WikiText x)   -> Just $ x
     Just (WikiLink x _) -> Just $ x
+    Just (WikiText x :> _) -> Just $ x
+    Just (WikiLink x _ :> _) -> Just $ x
     _ -> Nothing
 
 getInfobox :: Wiki -> Either HistoryError Infobox
