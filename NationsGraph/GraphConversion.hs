@@ -16,46 +16,18 @@ import NationsGraph.Types
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Monoid
-import Data.List
 import Data.Maybe
-import Data.Char
 import Data.Foldable (foldMap)
 import qualified Data.Vector as V
 
-import Control.Monad.Trans.Maybe
-import Control.Monad.Trans
-import Control.Monad
 import Control.Applicative as A
 
-import Control.Arrow
-import Data.Tuple
-
 import Data.Aeson
-import Data.Aeson.Lens
 import Control.Lens
-import Data.Aeson.Encode
-import Data.Aeson.Encode.Pretty
-
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-import qualified Data.Text.Lazy.IO as LTIO
-import Data.Text.Encoding
-import qualified Data.ByteString.Lazy.Char8 as BSC
-
-import qualified Data.Attoparsec.Text as AP
-
-import Control.Monad.Trans.Either
-import Control.Error.Util
-import Control.Exception
-
-import Network.HTTP.Client (HttpException)
-import Network.Wreq
-import qualified Network.Wreq.Session as Sess
 
 import qualified Data.Graph.Inductive as G
 import Data.Graph.Inductive (Gr)
 import Data.GraphViz
-import Data.GraphViz.Printing hiding ((<>))
 import Data.GraphViz.Attributes.Complete
 
 --The one on the right is considered cannonical, we're just grabbing
