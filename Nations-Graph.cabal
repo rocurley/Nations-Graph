@@ -28,7 +28,7 @@ executable Nations-Graph
   -- hs-source-dirs:      
   default-language:    Haskell2010
 
-Test-Suite Nations-Graph-testsuite
+Test-Suite Nations-Graph-testsuitecontainers
   Type:                     exitcode-stdio-1.0
   Main-is:                  NationsGraph/TestSuite.hs
-  Build-depends:            base, QuickCheck
+  Build-depends:            base, QuickCheck, containers, vector, aeson, lens, fgl, graphviz, text, http-client, test-framework, test-framework-quickcheck2

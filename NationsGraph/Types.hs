@@ -44,12 +44,17 @@ data NationNode = NationNode
         _nationPrecursors :: S.Set NationKey,
         _nationSuccessors :: S.Set NationKey
     }
+instance Arbitrary NationNode 
+    arbitrary = NationNode <$> arbitrary <*> arbitrary <*> arbitrary
+
 data NationValue = NationValue
     {
         _nationname :: String,
         _nationStartYear :: Maybe Int,
         _nationEndYear :: Maybe Int
-    }
+    } deriving (Show, Ord, Eq)
+instance Arbitrary NationValue where
+    arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary
 
 data SubdivisionNode = SubdivisionNode
     {
