@@ -19,6 +19,10 @@ import qualified Data.Set as S
 
 import qualified Data.Text as T
 
+import Control.Applicative
+
+import Test.QuickCheck
+
 import Network.HTTP.Client (HttpException)
 
 data Wiki = WikiText T.Text |
@@ -44,8 +48,10 @@ data NationNode = NationNode
         _nationPrecursors :: S.Set NationKey,
         _nationSuccessors :: S.Set NationKey
     }
-instance Arbitrary NationNode 
-    arbitrary = NationNode <$> arbitrary <*> arbitrary <*> arbitrary
+instance Arbitrary NationNode where
+    arbitrary = NationNode <$> arbitrary <*>
+        fmap S.fromList arbitrary <*>
+        fmap S.fromList arbitrary
 
 data NationValue = NationValue
     {

@@ -31,4 +31,4 @@ executable Nations-Graph
 Test-Suite Nations-Graph-testsuitecontainers
   Type:                     exitcode-stdio-1.0
   Main-is:                  NationsGraph/TestSuite.hs
-  Build-depends:            base, QuickCheck, containers, vector, aeson, lens, fgl, graphviz, text, http-client, test-framework, test-framework-quickcheck2
+  Build-depends:            base, QuickCheck, containers, vector, aeson, lens, fgl, graphviz, text, http-client, test-framework, test-framework-quickcheck2, fgl-arbitrary
