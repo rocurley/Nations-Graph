@@ -1,6 +1,4 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module NationsGraph.Types (
     Wiki(..),
@@ -11,7 +9,11 @@ module NationsGraph.Types (
     NationValue(..),
     SubdivisionNode(..),
     BuildingNationGraph(..),
-    HttpException
+    HttpException,
+    nationname,
+    nationStartYear,
+    nationEndYear,
+    position,
 ) where
 
 import qualified Data.Map as M
@@ -22,6 +24,8 @@ import qualified Data.Text as T
 import Control.Applicative
 
 import Test.QuickCheck
+
+import Control.Lens
 
 import Network.HTTP.Client (HttpException)
 
@@ -48,6 +52,7 @@ data NationNode = NationNode
         _nationPrecursors :: S.Set NationKey,
         _nationSuccessors :: S.Set NationKey
     }
+
 instance Arbitrary NationNode where
     arbitrary = NationNode <$> arbitrary <*>
         fmap S.fromList arbitrary <*>
@@ -57,10 +62,12 @@ data NationValue = NationValue
     {
         _nationname :: String,
         _nationStartYear :: Maybe Int,
-        _nationEndYear :: Maybe Int
+        _nationEndYear :: Maybe Int,
+        _position :: Maybe (Float, Float)
     } deriving (Show, Ord, Eq)
+makeLenses ''NationValue
 instance Arbitrary NationValue where
-    arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary
+    arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
 
 data SubdivisionNode = SubdivisionNode
     {

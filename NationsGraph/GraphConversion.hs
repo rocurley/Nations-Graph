@@ -10,20 +10,29 @@ module NationsGraph.GraphConversion (
     toUnlabeledTGF,
     toTGF,
     toGV,
+    loadPositionsFromGraphml,
+    addPositionsToGraph,
+    svgToHTML,
+    svgToXHTML,
 ) where
 import NationsGraph.Types
 
 import qualified Data.Map as M
 import qualified Data.Set as S
+import Data.Char
+import qualified Data.Text as T
 import Data.Monoid
 import Data.Maybe
 import Data.Foldable (foldMap)
 import qualified Data.Vector as V
 
-import Control.Applicative as A
+import Control.Applicative
 
 import Data.Aeson
 import Control.Lens
+
+import Text.XML
+import Text.XML.Lens
 
 import qualified Data.Graph.Inductive as G
 import Data.Graph.Inductive (Gr)
@@ -71,7 +80,7 @@ showLifetime sy ey = "(" ++ maybe "?" show sy ++ " to " ++ maybe "?" show ey ++ 
 
 instance Show BuildingNationGraph where
     show ng@(BuildingNationGraph _ _ synonyms todo errors) =
-        M.foldWithKey (\ k (NationNode (NationValue n sy ey) p s) rest -> k ++
+        M.foldWithKey (\ k (NationNode (NationValue n sy ey _) p s) rest -> k ++
                 "\n\tname:\n\t\t" ++ n ++
                 "\n\tlifetime:\n\t\t" ++ showLifetime sy ey ++
                 "\n\tprecursors:" ++
@@ -102,7 +111,7 @@ toFGL nationGraph = let
     numberedNodesAscList = zip (S.toAscList nodes) [1..]
     keyToValue :: NationKey -> NationValue
     keyToValue k = case M.lookup k graph of
-        Nothing -> NationValue k Nothing Nothing
+        Nothing -> NationValue k Nothing Nothing Nothing
         Just (NationNode val _ _) -> val
     fglNodes = map (\ (k,i) -> (i, keyToValue k)) numberedNodesAscList
     numberedNodes = M.fromAscList numberedNodesAscList
@@ -118,7 +127,7 @@ toUnlabeledTGF graph = let
 
 toTGF :: Gr NationValue () -> String
 toTGF graph = let
-    nodesStr = foldMap (\(i, NationValue name sy ey) ->
+    nodesStr = foldMap (\(i, NationValue name sy ey _) ->
         show i ++ " " ++ name ++ "\\n" ++ 
         showLifetime sy ey ++ "\n") $ G.labNodes graph
     edgesStr = foldMap (\(i, j, _) -> show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
@@ -137,12 +146,14 @@ toGV graph = let
 
 instance ToJSON (Gr NationValue ()) where
     toJSON graph =  let
-        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey) -> 
+        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey pos) -> 
                 object $ catMaybes [
                     Just ("id", toJSON i),
                     Just ("label", toJSON name),
                     ("startYear",) <$> toJSON <$> sy,
-                    ("endYear",) <$> toJSON <$> ey
+                    ("endYear",) <$> toJSON <$> ey,
+                    ("x",) <$> toJSON <$> fst <$> pos,
+                    ("y",) <$> toJSON <$> snd <$> pos
                 ]
             ) $ G.labNodes graph
         jsonEdges = toJSON $ map (\ (p,s,_) -> 
@@ -161,9 +172,79 @@ instance FromJSON (Gr NationValue ()) where
                 label <- node.:"label"
                 startYear <- node.:?"startYear"
                 endYear <- node.:?"endYear"
-                return (id,NationValue label startYear endYear)
+                x <- node.:?"x"
+                y <- node.:?"y"
+                let pos = (,) <$> x <*> y
+                return (id,NationValue label startYear endYear pos)
             ) $ V.toList jsonNodes
         edges <- traverse (\ (Object edge) ->
                 (,,()) <$> edge.:"source" <*> edge.:"target"
             ) $ V.toList jsonEdges
         return $ G.mkGraph nodes edges
+
+shapeNodes = 
+    root.
+    named "graphml"./
+    named "graph"./
+    named "node"./
+    named "data"./
+    named "ShapeNode"
+
+asRead :: (Read a, Show a) => Lens' T.Text a
+asRead f txt= T.pack <$> show <$> f (read $ T.unpack txt)
+
+nodeInfo :: Traversal' Element (Int,(Float,Float))
+nodeInfo f node = let
+    labelLens :: Traversal' Element Int
+    labelLens = id./named "NodeLabel".text.
+            filtered (not . T.all isSpace).
+            asRead
+    xLens :: Traversal' Element Float
+    xLens = id./
+            named "Geometry".
+            attr "x".
+            asRead
+    yLens :: Traversal' Element Float
+    yLens = id./
+            named "Geometry".
+            attr "y".
+            asRead
+    maybeTrio = (\ label x y -> (label,(x,y))) <$>
+        node^? labelLens <*> node^? xLens <*> node^? yLens
+    in case maybeTrio of
+        Nothing -> pure node
+        Just trio -> fmap (\ (label,(x,y)) -> 
+            labelLens.~label $ xLens.~x $ yLens.~y $ node) $ f trio
+
+loadPositionsFromGraphml :: Document -> [(Int,(Float,Float))]
+loadPositionsFromGraphml doc = doc^..shapeNodes.nodeInfo
+
+addPositionsToGraph :: M.Map Int (Float,Float) -> Gr NationValue () -> Gr NationValue ()
+addPositionsToGraph positions graph =
+    G.gmap (\ (p,i,val,s) ->
+        (p,i,position.~M.lookup i positions $ val,s)
+    ) graph
+
+svgToHTML :: Document -> Document
+svgToHTML doc = let
+    svg = doc^..root.named "svg"
+    html = Element "html" M.empty
+        [
+            NodeElement $ Element "head" M.empty [],
+            NodeElement $ Element "body" M.empty $ NodeElement <$> svg
+        ]
+    in Document (Prologue [] Nothing []) html []
+
+svgToXHTML :: Document -> Document
+svgToXHTML doc = let
+    svg = doc^..root.named "svg"
+    xhtmlName :: T.Text -> Name
+    xhtmlName name = Name name (Just "http://www.w3.org/1999/xhtml") Nothing
+    html = Element (xhtmlName "html") M.empty
+        [
+            NodeElement $ Element (xhtmlName "head") M.empty
+                [NodeElement $ Element (xhtmlName "title") M.empty
+                    [NodeContent "Nations Graph"]],
+            NodeElement $ Element (xhtmlName "body") M.empty $ NodeElement <$> svg
+        ]
+    in Document (Prologue [] Nothing []) html []
