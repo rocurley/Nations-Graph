@@ -5,7 +5,7 @@
 
 module NationsGraph.GraphConversion (
     BuildingNationGraph(..),
-	toAdjacency,
+    toAdjacency,
     toFGL,
     toUnlabeledTGF,
     toTGF,
@@ -23,10 +23,7 @@ import Data.Char
 import qualified Data.Text as T
 import Data.Monoid
 import Data.Maybe
-import Data.Foldable (foldMap)
 import qualified Data.Vector as V
-
-import Control.Applicative
 
 import Data.Aeson
 import Control.Lens

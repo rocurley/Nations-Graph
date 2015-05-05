@@ -60,7 +60,8 @@ nonDouble c = do
 xmlName :: AP.Parser T.Text
 xmlName = do
     c1 <- AP.letter <|> AP.char '_' <|> AP.char ':'
-    rest <- AP.takeWhile (\ c -> isLetter c || isDigit c || (c `elem` ".-_:"))
+    rest <- AP.takeWhile $ \ c ->
+        isLetter c || isDigit c || (c `elem` (".-_:" :: String))
     return $ T.cons c1 rest
 
 xmlAttribute :: AP.Parser (T.Text,T.Text)
@@ -94,15 +95,15 @@ wikiParser = do
             wikiLinkParser <|>
             wikiTemplateParser <|>
             WikiText <$> ("<"<|>">") <|>
-            (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) A.empty "{}[]") <|>
+            (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) A.empty ("{}[]"::String)) <|>
             (WikiText <$> AP.takeWhile (AP.notInClass "{}[]<>|"))
     if wikiEmpty begin
     then return begin
     else (AP.endOfInput >> return begin) <|> do
         next <- wikiParser
         return $ if wikiEmpty next
-        then begin
-        else begin :> next
+            then begin
+            else begin :> next
 
 wikiHTMLTagParser :: AP.Parser Wiki
 wikiHTMLTagParser = do
