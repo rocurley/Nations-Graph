@@ -62,14 +62,17 @@ loadLayoutGraph = do
 
 runWebserver :: IO ()
 runWebserver = do
+    json <- BSC.readFile "./out.json"
+    let Just graph = decode json
     svg <- Text.XML.readFile Text.XML.def "./out.svg"
+    template <- Text.XML.readFile Text.XML.def "./base.xhtml"
+    let page = mergeSvgXHTML (fillInSvg graph svg) template
     scotty 3000 $ do
         get "/" $ do
             --html $ "<!DOCTYPE html>" <>
             html $ 
                 --Text.XML.renderText (Text.XML.def{Text.XML.rsPretty = True})
-                Text.XML.renderText Text.XML.def 
-                (svgToXHTML svg)
+                Text.XML.renderText Text.XML.def page
             setHeader "Content-Type" "application/xhtml+xml"
 
 main = do

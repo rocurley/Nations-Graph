@@ -14,27 +14,39 @@ module NationsGraph.GraphConversion (
     addPositionsToGraph,
     svgToHTML,
     svgToXHTML,
+    mergeSvgXHTML,
+    fillInSvg,
+    iTreeFromList,
+    intervalIntersect,
+    rectangleIntersect,
 ) where
 import NationsGraph.Types
 
 import qualified Data.Map as M
 import qualified Data.Set as S
+import Data.List
 import Data.Char
+import Data.Ord
 import qualified Data.Text as T
 import Data.Monoid
 import Data.Maybe
 import qualified Data.Vector as V
 
-import Data.Aeson
 import Control.Lens
+
+import Data.Aeson hiding ((.=))
 
 import Text.XML
 import Text.XML.Lens
+
+import Control.Monad.State
 
 import qualified Data.Graph.Inductive as G
 import Data.Graph.Inductive (Gr)
 import Data.GraphViz
 import Data.GraphViz.Attributes.Complete
+
+import Debug.Trace
 
 --The one on the right is considered cannonical, we're just grabbing
 --p and s from the left one.
@@ -90,7 +102,7 @@ instance Show BuildingNationGraph where
                "\nerrors:" ++ show errors) graph
         where
             graph = toAdjacency ng 
-            filteredTodo = [bestName|name <- todo,
+            filteredTodo = [bestName | name <- todo,
                                 let bestName = fromMaybe name $ M.lookup name synonyms,
                                 not $ bestName `M.member` graph]
 
@@ -245,3 +257,77 @@ svgToXHTML doc = let
             NodeElement $ Element (xhtmlName "body") M.empty $ NodeElement <$> svg
         ]
     in Document (Prologue [] Nothing []) html []
+
+mergeSvgXHTML :: Document -> Document -> Document
+mergeSvgXHTML svgDoc xhtmlDoc = let
+    svgNodeList = svgDoc^..root.named "svg".to NodeElement 
+    in root.named "html"./named "body".nodes %~ (++svgNodeList) $ xhtmlDoc
+
+--fillInNode :: Gr NationValue () -> [Node] -> [Node]
+--fillInNode gr [NodeContent indexString] = let
+--    i = read $ T.unpack indexString
+--    (Just (_,_,NationValue name sy ey _,_),_) = G.match i gr
+--    in T.pack $ name ++ "\n" ++ showLifetime sy ey
+--fillInNode _ x = x
+
+fillInSvg :: Gr NationValue () -> Document -> Document
+fillInSvg gr doc = let
+    iTree = iTreeFromList $ svgRectangles doc
+    in root.named "svg"./named "g"./named "g"./named "text"%~tweakElement gr iTree $ doc
+
+tweakElement :: Gr NationValue () -> IntervalTree Float (Float,Float)-> Element -> Element
+tweakElement gr iTree = execState $ do
+    i <- read <$> T.unpack <$> use text
+    x0 <- read <$> T.unpack <$> use (attr "x")
+    y0 <- read <$> T.unpack <$> use (attr "y")
+    let ((lR,rR),(uR,bR)) = head $ rectangleIntersect iTree (x0,y0)
+    let x = T.pack $ show $ (lR + rR)/2
+    Text.XML.Lens.attrs %= M.delete "{http://www.w3.org/XML/1998/namespace}space"
+    let (Just (_,_,NationValue name sy ey _,_),_) = G.match i gr
+    let l1 = Element "{http://www.w3.org/2000/svg}tspan"
+            (M.fromList [("x",x),("dy","-0.7em"),
+                ("text-anchor","middle")])
+            [NodeContent $ T.pack name]
+    let l2 = Element "{http://www.w3.org/2000/svg}tspan"
+            (M.fromList [("x",x),("dy","1.4em"),
+                ("text-anchor","middle")])
+            [NodeContent $ T.pack $ showLifetime sy ey]
+    nodes .= fmap NodeElement [l1,l2]
+
+iTreeFromList :: Ord a => [((a,a),b)] -> IntervalTree a b
+iTreeFromList [] = EmptyNode
+iTreeFromList xs = let
+    mid = foldr (\ ((l,r),_) acc -> (l:r:acc)) [] xs !! length xs
+    leftIntervals = filter ((<mid) . snd . fst) xs
+    centerIntervals = filter (\ ((l,r),_) -> l <= mid && mid <= r) xs
+    rightIntervals = filter ((mid<) . fst . fst) xs
+    in Node mid
+        (iTreeFromList leftIntervals)
+        (sortOn (fst.fst) centerIntervals,
+            sortOn (Down . snd.fst) centerIntervals)
+        (iTreeFromList rightIntervals)
+
+intervalIntersect :: Ord a => IntervalTree a b -> a -> [((a,a),b)]
+intervalIntersect EmptyNode _ = []
+intervalIntersect (Node mid left (asc,desc) right) x = case compare x mid of
+    LT -> intervalIntersect left x ++ takeWhile ((<=x) . fst . fst) asc
+    EQ -> asc
+    GT -> intervalIntersect right x ++ takeWhile ((x<=) . snd . fst) desc
+
+rectangleIntersect :: Ord a => IntervalTree a (a,a) -> (a,a) -> [((a,a),(a,a))]
+rectangleIntersect iTree (x,y) =
+    [rect | rect@(_,(y1,y2))<-intervalIntersect iTree x, y1 <= y, y <= y2]
+
+rectFromElem :: (Read a, Num a) => Element -> ((a,a),(a,a))
+rectFromElem elem = let
+     x = read $ T.unpack $ elem^.attr "x"
+     w = read $ T.unpack $ elem^.attr "width"
+     y = read $ T.unpack $ elem^.attr "y"
+     h = read $ T.unpack $ elem^.attr "height"
+     in ((x,x+w),(y,y+h))
+
+svgRectangles :: (Read a, Num a) => Document -> [((a,a),(a,a))]
+svgRectangles doc = doc^..root.
+    named "svg"./named "g"./named "g".
+    filtered (\ elem -> elem^?attr "fill" /= Just "white")./
+    named "rect".to rectFromElem

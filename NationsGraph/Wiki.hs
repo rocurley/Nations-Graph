@@ -16,7 +16,6 @@ import qualified Data.Map as M
 import Data.Monoid
 import Data.Maybe
 import Data.Char
-import Data.Foldable (foldMap)
 
 import Control.Monad
 import Control.Applicative as A
@@ -138,7 +137,7 @@ wikiTemplateParser = do
     title <- AP.takeWhile (\ c -> c /= '|' && c /= '}')
     parameters <- A.many $ fmap Right wikiTemplateNamedParameter <|> fmap Left wikiTemplateUnNamedParameter
     "}}"
-    return $ WikiTemplate (T.strip title) [x|Left x <- parameters] $ M.fromList [x|Right x <- parameters] 
+    return $ WikiTemplate (T.strip title) [x | Left x <- parameters] $ M.fromList [x | Right x <- parameters] 
 
 redirectParser :: AP.Parser T.Text
 redirectParser = do

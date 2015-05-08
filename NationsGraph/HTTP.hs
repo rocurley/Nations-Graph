@@ -3,14 +3,12 @@
 {-# LANGUAGE TupleSections #-}
 
 module NationsGraph.HTTP (
-	getWiki,
-	httpGetInfobox,
+    getWiki,
+    httpGetInfobox,
 ) where
 
 import NationsGraph.Types
 import NationsGraph.Wiki
-
-import Control.Applicative as A
 
 import Data.Aeson.Lens
 import Control.Lens
