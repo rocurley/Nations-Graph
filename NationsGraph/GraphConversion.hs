@@ -263,36 +263,52 @@ mergeSvgXHTML svgDoc xhtmlDoc = let
     svgNodeList = svgDoc^..root.named "svg".to NodeElement 
     in root.named "html"./named "body".nodes %~ (++svgNodeList) $ xhtmlDoc
 
---fillInNode :: Gr NationValue () -> [Node] -> [Node]
---fillInNode gr [NodeContent indexString] = let
---    i = read $ T.unpack indexString
---    (Just (_,_,NationValue name sy ey _,_),_) = G.match i gr
---    in T.pack $ name ++ "\n" ++ showLifetime sy ey
---fillInNode _ x = x
-
 fillInSvg :: Gr NationValue () -> Document -> Document
-fillInSvg gr doc = let
-    iTree = iTreeFromList $ svgRectangles doc
-    in root.named "svg"./named "g"./named "g"./named "text"%~tweakElement gr iTree $ doc
+fillInSvg gr = execState $ do
+    root.named "svg"./named "g".nodes %=
+        filter (\case
+            NodeElement g -> (g^..id./named "rect".attr "fill") /= ["rgb(255,204,0)"]
+            _ -> True
+        )
+    root.named "svg"./named "g"./named "g".filtered (\ g ->
+            g^?id./named "rect".attr "fill" /= Just "white")%= tweakElement gr
 
-tweakElement :: Gr NationValue () -> IntervalTree Float (Float,Float)-> Element -> Element
-tweakElement gr iTree = execState $ do
-    i <- read <$> T.unpack <$> use text
-    x0 <- read <$> T.unpack <$> use (attr "x")
-    y0 <- read <$> T.unpack <$> use (attr "y")
-    let ((lR,rR),(uR,bR)) = head $ rectangleIntersect iTree (x0,y0)
-    let x = T.pack $ show $ (lR + rR)/2
-    Text.XML.Lens.attrs %= M.delete "{http://www.w3.org/XML/1998/namespace}space"
-    let (Just (_,_,NationValue name sy ey _,_),_) = G.match i gr
-    let l1 = Element "{http://www.w3.org/2000/svg}tspan"
-            (M.fromList [("x",x),("dy","-0.7em"),
-                ("text-anchor","middle")])
-            [NodeContent $ T.pack name]
-    let l2 = Element "{http://www.w3.org/2000/svg}tspan"
-            (M.fromList [("x",x),("dy","1.4em"),
-                ("text-anchor","middle")])
-            [NodeContent $ T.pack $ showLifetime sy ey]
-    nodes .= fmap NodeElement [l1,l2]
+tweakElement :: Gr NationValue () -> Element -> Element
+tweakElement gr = execState $ do
+    id./named "rect".attr "fill".="rgb(255,204,0)"
+    x <- use (id./named "rect".attr "x")
+    y <- use (id./named "rect".attr "y")
+    i <- read <$> T.unpack <$> use (id./named "text".text) :: State Element Int
+    width <- use (id./named "rect".attr "width")
+    height <- use (id./named "rect".attr "height")
+    nodes%=filter (\ node -> node^?_Element.localName == Just "rect")
+    let textArea = Element
+            "{http://www.w3.org/1999/xhtml}textArea"
+            (M.fromList [("x",x),("y",y),("width",width),("height",height)])
+            [
+                NodeContent "Hello",
+                NodeElement $ Element
+                    "{http://www.w3.org/1999/xhtml}br"
+                    M.empty
+                    [],
+                NodeContent "World"
+            ]
+    let miniBody = Element
+            "{http://www.w3.org/1999/xhtml}body"
+            M.empty
+            [
+                NodeContent "Hello Hello Hello Hello Hello Hello Hello Hello Hello",
+                NodeElement $ Element
+                    "{http://www.w3.org/1999/xhtml}br"
+                    M.empty
+                    [],
+                NodeContent "World"
+            ]
+    let foreignObject = Element
+            "{http://www.w3.org/2000/svg}foreignObject"
+            (M.fromList [("x",x),("y",y),("width",width),("height",height)])
+            [NodeElement miniBody]
+    nodes%=(NodeElement foreignObject :)
 
 iTreeFromList :: Ord a => [((a,a),b)] -> IntervalTree a b
 iTreeFromList [] = EmptyNode

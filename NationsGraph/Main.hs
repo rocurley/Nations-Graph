@@ -74,6 +74,10 @@ runWebserver = do
                 --Text.XML.renderText (Text.XML.def{Text.XML.rsPretty = True})
                 Text.XML.renderText Text.XML.def page
             setHeader "Content-Type" "application/xhtml+xml"
+        get "/style.css" $ do
+            file "./style.css"
+            setHeader "Content-Type" "text/css"
+            
 
 main = do
     args <- getArgs
