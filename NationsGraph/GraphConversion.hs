@@ -16,9 +16,6 @@ module NationsGraph.GraphConversion (
     svgToXHTML,
     mergeSvgXHTML,
     fillInSvg,
-    iTreeFromList,
-    intervalIntersect,
-    rectangleIntersect,
 ) where
 import NationsGraph.Types
 
@@ -309,41 +306,3 @@ tweakElement gr = execState $ do
             (M.fromList [("x",x),("y",y),("width",width),("height",height)])
             [NodeElement miniBody]
     nodes%=(NodeElement foreignObject :)
-
-iTreeFromList :: Ord a => [((a,a),b)] -> IntervalTree a b
-iTreeFromList [] = EmptyNode
-iTreeFromList xs = let
-    mid = foldr (\ ((l,r),_) acc -> (l:r:acc)) [] xs !! length xs
-    leftIntervals = filter ((<mid) . snd . fst) xs
-    centerIntervals = filter (\ ((l,r),_) -> l <= mid && mid <= r) xs
-    rightIntervals = filter ((mid<) . fst . fst) xs
-    in Node mid
-        (iTreeFromList leftIntervals)
-        (sortOn (fst.fst) centerIntervals,
-            sortOn (Down . snd.fst) centerIntervals)
-        (iTreeFromList rightIntervals)
-
-intervalIntersect :: Ord a => IntervalTree a b -> a -> [((a,a),b)]
-intervalIntersect EmptyNode _ = []
-intervalIntersect (Node mid left (asc,desc) right) x = case compare x mid of
-    LT -> intervalIntersect left x ++ takeWhile ((<=x) . fst . fst) asc
-    EQ -> asc
-    GT -> intervalIntersect right x ++ takeWhile ((x<=) . snd . fst) desc
-
-rectangleIntersect :: Ord a => IntervalTree a (a,a) -> (a,a) -> [((a,a),(a,a))]
-rectangleIntersect iTree (x,y) =
-    [rect | rect@(_,(y1,y2))<-intervalIntersect iTree x, y1 <= y, y <= y2]
-
-rectFromElem :: (Read a, Num a) => Element -> ((a,a),(a,a))
-rectFromElem elem = let
-     x = read $ T.unpack $ elem^.attr "x"
-     w = read $ T.unpack $ elem^.attr "width"
-     y = read $ T.unpack $ elem^.attr "y"
-     h = read $ T.unpack $ elem^.attr "height"
-     in ((x,x+w),(y,y+h))
-
-svgRectangles :: (Read a, Num a) => Document -> [((a,a),(a,a))]
-svgRectangles doc = doc^..root.
-    named "svg"./named "g"./named "g".
-    filtered (\ elem -> elem^?attr "fill" /= Just "white")./
-    named "rect".to rectFromElem

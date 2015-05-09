@@ -10,7 +10,6 @@ module NationsGraph.Types (
     SubdivisionNode(..),
     BuildingNationGraph(..),
     HttpException,
-    IntervalTree(..),
     nationname,
     nationStartYear,
     nationEndYear,
@@ -96,6 +95,3 @@ data Infobox = NationInfobox{
                     _precursors :: [String],
                     _successors :: [String],
                     _parentCandidates :: [String]} deriving Show
-
-data IntervalTree a b = Node a (IntervalTree a b) ([((a,a),b)],[((a,a),b)]) (IntervalTree a b) | EmptyNode
-    deriving (Show)
