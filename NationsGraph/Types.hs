@@ -61,11 +61,12 @@ data NationValue = NationValue
         _nationname :: String,
         _nationStartYear :: Maybe Int,
         _nationEndYear :: Maybe Int,
-        _position :: Maybe (Float, Float)
+        _position :: Maybe (Float, Float),
+        _wikiArticle :: String
     } deriving (Show, Ord, Eq)
 makeLenses ''NationValue
 instance Arbitrary NationValue where
-    arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+    arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
 
 data SubdivisionNode = SubdivisionNode
     {

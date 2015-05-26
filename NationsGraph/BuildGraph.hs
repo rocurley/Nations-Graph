@@ -40,7 +40,7 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
                         (M.insert
                             name 
                             (NationNode
-                                (NationValue n sy ey Nothing)
+                                (NationValue n sy ey Nothing name)
                                 (S.fromList p)
                                 (S.fromList s)
                             )
@@ -55,7 +55,7 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
                         (M.insert
                             name
                             (SubdivisionNode
-                                (NationValue n sy ey Nothing)
+                                (NationValue n sy ey Nothing name)
                                 pc
                                 (S.fromList p)
                                 (S.fromList s)

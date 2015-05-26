@@ -86,13 +86,14 @@ showLifetime sy ey = "(" ++ maybe "?" show sy ++ " to " ++ maybe "?" show ey ++ 
 
 instance Show BuildingNationGraph where
     show ng@(BuildingNationGraph _ _ synonyms todo errors) =
-        M.foldWithKey (\ k (NationNode (NationValue n sy ey _) p s) rest -> k ++
+        M.foldWithKey (\ k (NationNode (NationValue n sy ey _ key) p s) rest -> k ++
                 "\n\tname:\n\t\t" ++ n ++
                 "\n\tlifetime:\n\t\t" ++ showLifetime sy ey ++
                 "\n\tprecursors:" ++
                 foldMap ("\n\t\t"++) p ++
                 "\n\tsuccessors:" ++
                 foldMap ("\n\t\t"++) s ++
+                "\n\twikipedia article:\n\t\t" ++ key ++
                 "\n" ++ rest
             ) ("remaining:"++show filteredTodo++
                "\nsynonyms:"++ show synonyms++
@@ -117,7 +118,7 @@ toFGL nationGraph = let
     numberedNodesAscList = zip (S.toAscList nodes) [1..]
     keyToValue :: NationKey -> NationValue
     keyToValue k = case M.lookup k graph of
-        Nothing -> NationValue k Nothing Nothing Nothing
+        Nothing -> NationValue k Nothing Nothing Nothing k
         Just (NationNode val _ _) -> val
     fglNodes = map (\ (k,i) -> (i, keyToValue k)) numberedNodesAscList
     numberedNodes = M.fromAscList numberedNodesAscList
@@ -133,7 +134,7 @@ toUnlabeledTGF graph = let
 
 toTGF :: Gr NationValue () -> String
 toTGF graph = let
-    nodesStr = foldMap (\(i, NationValue name sy ey _) ->
+    nodesStr = foldMap (\(i, NationValue name sy ey _ _) ->
         show i ++ " " ++ name ++ "\\n" ++ 
         showLifetime sy ey ++ "\n") $ G.labNodes graph
     edgesStr = foldMap (\(i, j, _) -> show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
@@ -152,14 +153,15 @@ toGV graph = let
 
 instance ToJSON (Gr NationValue ()) where
     toJSON graph =  let
-        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey pos) -> 
+        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey pos key) -> 
                 object $ catMaybes [
                     Just ("id", toJSON i),
                     Just ("label", toJSON name),
                     ("startYear",) <$> toJSON <$> sy,
                     ("endYear",) <$> toJSON <$> ey,
                     ("x",) <$> toJSON <$> fst <$> pos,
-                    ("y",) <$> toJSON <$> snd <$> pos
+                    ("y",) <$> toJSON <$> snd <$> pos,
+                    Just ("wikiArticle", toJSON key)
                 ]
             ) $ G.labNodes graph
         jsonEdges = toJSON $ map (\ (p,s,_) -> 
@@ -180,8 +182,9 @@ instance FromJSON (Gr NationValue ()) where
                 endYear <- node.:?"endYear"
                 x <- node.:?"x"
                 y <- node.:?"y"
+                key <- node.:"wikiArticle"
                 let pos = (,) <$> x <*> y
-                return (id,NationValue label startYear endYear pos)
+                return (id,NationValue label startYear endYear pos key)
             ) $ V.toList jsonNodes
         edges <- traverse (\ (Object edge) ->
                 (,,()) <$> edge.:"source" <*> edge.:"target"
@@ -257,49 +260,90 @@ svgToXHTML doc = let
 
 mergeSvgXHTML :: Document -> Document -> Document
 mergeSvgXHTML svgDoc xhtmlDoc = let
-    svgNodeList = svgDoc^..root.named "svg".to NodeElement 
+    svgNodeList = shrinkSvg svgDoc^..root.named "svg".to NodeElement 
     in root.named "html"./named "body".nodes %~ (++svgNodeList) $ xhtmlDoc
+
+shrinkSvg :: Document -> Document
+shrinkSvg = execState $ do
+    root.named "svg".attribute "height".= Just "600"
+    root.named "svg".attribute "width".= Just "600"
+{-
+<svg>
+  <g>
+    <g fill="white">  #keep unmodified
+      <rect/>
+    </g>
+    <g fill="rgb(255,204,0)"> #kill
+      <rect/>
+    </g>
+    <g>
+      <text>1</text> #kill and replace
+      <rect fill="none"/> #set fill
+    </g>
+    ....
+    <g>
+      <text>44</text> #kill and replace
+      <rect fill="none"/> #set fill
+      <path/> #keep unmodified
+      ....
+    </g>
+  </g>
+<svg/>
+-}
+
 
 fillInSvg :: Gr NationValue () -> Document -> Document
 fillInSvg gr = execState $ do
+    prologue.= Prologue
+        [MiscInstruction $ Instruction
+            "xml-stylesheet"
+            "type=\"text/css\" href=\"style.css\""
+        ]
+        Nothing
+        []
+    --let cssElement = Element
+    --        "style"
+    --        (M.singleton "type" "text/css")
+    --        [NodeContent css]
+    --root.named "svg".nodes %= (NodeElement cssElement :)
     root.named "svg"./named "g".nodes %=
-        filter (\case
-            NodeElement g -> (g^..id./named "rect".attr "fill") /= ["rgb(255,204,0)"]
-            _ -> True
+        filter (\ g ->
+            (g^?_Element.attr "fill") /= Just "rgb(255,204,0)"
         )
     root.named "svg"./named "g"./named "g".filtered (\ g ->
-            g^?id./named "rect".attr "fill" /= Just "white")%= tweakElement gr
+            g^?attr "fill" /= Just "white")%= tweakElement gr
 
 tweakElement :: Gr NationValue () -> Element -> Element
 tweakElement gr = execState $ do
     id./named "rect".attr "fill".="rgb(255,204,0)"
     x <- use (id./named "rect".attr "x")
     y <- use (id./named "rect".attr "y")
-    i <- read <$> T.unpack <$> use (id./named "text".text) :: State Element Int
+    i <- read <$> T.unpack <$> use (id./named "text".text)
+    let Just (NationValue name sy ey _ wikiLink) = G.lab gr i
     width <- use (id./named "rect".attr "width")
     height <- use (id./named "rect".attr "height")
-    nodes%=filter (\ node -> node^?_Element.localName == Just "rect")
-    let textArea = Element
-            "{http://www.w3.org/1999/xhtml}textArea"
-            (M.fromList [("x",x),("y",y),("width",width),("height",height)])
-            [
-                NodeContent "Hello",
-                NodeElement $ Element
-                    "{http://www.w3.org/1999/xhtml}br"
-                    M.empty
-                    [],
-                NodeContent "World"
-            ]
+    nodes%=filter (\ node -> node^?_Element.localName /= Just "text")
     let miniBody = Element
             "{http://www.w3.org/1999/xhtml}body"
             M.empty
             [
-                NodeContent "Hello Hello Hello Hello Hello Hello Hello Hello Hello",
                 NodeElement $ Element
-                    "{http://www.w3.org/1999/xhtml}br"
-                    M.empty
-                    [],
-                NodeContent "World"
+                    "{http://www.w3.org/1999/xhtml}div"
+                    (M.singleton "class" "node")
+                    [
+                        NodeElement $ Element
+                            "{http://www.w3.org/1999/xhtml}a"
+                            (M.fromList [
+                                ("href", "http://en.wikipedia.org/wiki/"<> T.pack wikiLink),
+                                ("target","_blank")
+                            ])
+                            [NodeContent $ T.pack name],
+                        NodeElement $ Element
+                            "{http://www.w3.org/1999/xhtml}br"
+                            M.empty
+                            [],
+                        NodeContent $ T.pack $ showLifetime sy ey
+                    ]
             ]
     let foreignObject = Element
             "{http://www.w3.org/2000/svg}foreignObject"

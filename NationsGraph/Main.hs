@@ -12,11 +12,13 @@ import NationsGraph.GraphConversion
 import Data.Monoid
 
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 import Data.Aeson.Encode.Pretty
 
 import qualified Data.Text.Lazy.IO as LTIO
 import qualified Data.ByteString.Lazy.Char8 as BSC
+import Data.String.Conversions
 
 import qualified Network.Wreq.Session as Sess
 
@@ -30,6 +32,7 @@ import qualified Text.XML
 import Data.Graph.Inductive (Gr)
 
 import Web.Scotty
+--import Network.Wai.Middleware.Gzip
 
 --TODO:
 --Non-ascii characters
@@ -60,24 +63,39 @@ loadLayoutGraph = do
         (M.fromList $ loadPositionsFromGraphml graphml)
         graph
 
-runWebserver :: IO ()
-runWebserver = do
+data WebOptions = WebOptions{svgOnly :: Bool}
+
+runWebserver :: WebOptions -> IO ()
+runWebserver opts= do
     json <- BSC.readFile "./out.json"
+    --css <- cs <$> BSC.readFile "./style.css"
     let Just graph = decode json
-    svg <- Text.XML.readFile Text.XML.def "./out.svg"
+    svg <- fillInSvg graph <$> Text.XML.readFile Text.XML.def "./out.svg"
     template <- Text.XML.readFile Text.XML.def "./base.xhtml"
-    let page = mergeSvgXHTML (fillInSvg graph svg) template
+    let page = mergeSvgXHTML svg template
     scotty 3000 $ do
-        get "/" $ do
-            --html $ "<!DOCTYPE html>" <>
-            html $ 
-                --Text.XML.renderText (Text.XML.def{Text.XML.rsPretty = True})
-                Text.XML.renderText Text.XML.def page
-            setHeader "Content-Type" "application/xhtml+xml"
+        --middleware $ gzip def
+        get "/" $
+            if svgOnly opts
+            then do
+                html $
+                    Text.XML.renderText Text.XML.def svg
+                setHeader "Content-Type" "image/svg+xml"
+            else do
+                html $ 
+                    --Text.XML.renderText (Text.XML.def{Text.XML.rsPretty = True})
+                    Text.XML.renderText Text.XML.def page
+                setHeader "Content-Type" "application/xhtml+xml"
         get "/style.css" $ do
             file "./style.css"
             setHeader "Content-Type" "text/css"
-            
+        get "/code.js" $ do
+            file "./code.js"
+            setHeader "Content-Type" "application/javascript"
+        get "/d3.js" $ do
+            file "./d3.js"
+            setHeader "Content-Type" "application/javascript"
+
 
 main = do
     args <- getArgs
@@ -95,5 +113,10 @@ main = do
             --LTIO.writeFile "out.dot" $ renderDot $ toDot $ toGV fglResult
             --writeFile "./out.tgf" $ toTGF fglResult
             BSC.writeFile "./out2.json" $ encodePretty fglResult
-        ["web"] -> runWebserver
+        "web":webArgs -> let
+            webArgsSet = S.fromList webArgs
+            options = WebOptions{
+                    svgOnly = "--svg-only" `S.member` webArgsSet
+                }
+            in runWebserver options
         otherwise -> putStrLn "Invalid args"
