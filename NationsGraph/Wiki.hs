@@ -42,6 +42,13 @@ wikiToList :: Wiki -> [Wiki]
 wikiToList (a :> b) = a : wikiToList b
 wikiToList x = [x]
 
+wikiRemoveComments :: Wiki -> Maybe Wiki
+wikiRemoveComments =
+    fmap wikiFlatten .
+    foldl1May  (:>) .
+    filter (\case{WikiComment _ -> False; _ -> True}) .
+    wikiToList
+
 wikiFlatten :: Wiki -> Wiki
 wikiFlatten (WikiText a :> WikiText b :> rest) = wikiFlatten $ WikiText (a<>b) :> rest
 wikiFlatten (WikiText a :> WikiText b) = WikiText (a<>b)
@@ -55,6 +62,19 @@ nonDouble c = do
     case peek of
         Just c' -> if c == c' then A.empty else return c
         Nothing -> return c
+
+xmlComment :: AP.Parser Wiki
+xmlComment = do
+    "<!--"
+    content <- many $ nonDash <|> singleDash
+    "-->"
+    return $ WikiComment $ T.pack $ concat content
+    where
+    nonDash = (:[]) <$> AP.notChar '-'
+    singleDash = do
+        AP.char '-'
+        c <- AP.notChar '-'
+        return ['-',c]
 
 xmlName :: AP.Parser T.Text
 xmlName = do
@@ -90,7 +110,8 @@ xmlSpecificTag name = do
 
 wikiParser :: AP.Parser Wiki
 wikiParser = do
-    begin <- wikiHTMLTagParser <|>
+    begin <-xmlComment <|>
+            wikiHTMLTagParser <|>
             wikiLinkParser <|>
             wikiTemplateParser <|>
             WikiText <$> ("<"<|>">") <|>
@@ -200,17 +221,22 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
         where
             conn :: M.Map T.Text Wiki -> Char -> Maybe [String]
             conn props ty = let
-                raw = mapMaybe (\ i -> M.lookup (T.pack $ ty:show i) props) [1..15]
-                in filter (not . null) <$> map (T.unpack . T.strip) <$> raw `forM` (\case
-                        WikiText text -> Just text
-                        WikiText text :> (WikiTemplate t _ _ :> _) -> if t == "!"
-                            then Just text
-                            else Nothing
-                        _ -> Nothing)
+                raw = mapMaybe (\ i -> wikiRemoveComments =<< M.lookup (T.pack $ ty:show i) props) [1..15]
+                in filter (not . null) <$> map (T.unpack . T.strip) <$> traverse propTextContent raw
+
+            propTextContent :: Wiki -> Maybe T.Text
+            propTextContent (WikiText text) = Just text
+            propTextContent (WikiText text :> (WikiTemplate "!" _ _ :> _)) = Just text
+            propTextContent ((WikiText text :> WikiTemplate "!" _ _) :> _) = Just text
+            propTextContent _ = Nothing
+
             parents :: M.Map T.Text Wiki -> [String]
             parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to wikiToList]
+
             name = fmap (T.unpack . T.strip) . propLookup "conventional_long_name"
+
             startYear :: M.Map T.Text Wiki -> Maybe Int
             startYear = readYearMay <=< propLookup "year_start"
+
             endYear :: M.Map T.Text Wiki -> Maybe Int
             endYear = readYearMay <=< propLookup "year_end"

@@ -31,6 +31,7 @@ data Wiki = WikiText T.Text |
             WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |
             WikiLink T.Text [Wiki]|
             WikiHTMLTag T.Text (M.Map T.Text T.Text)|
+            WikiComment T.Text|
             Wiki :> Wiki
             deriving (Show)
 infixr :>
