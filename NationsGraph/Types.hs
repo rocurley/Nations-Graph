@@ -2,6 +2,7 @@
 
 module NationsGraph.Types (
     Wiki(..),
+    WikiNode(..),
     Infobox(..),
     HistoryError(..),
     NationKey(..),
@@ -16,6 +17,7 @@ module NationsGraph.Types (
     position,
 ) where
 
+import Data.List.NonEmpty
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -27,14 +29,14 @@ import Control.Lens
 
 import Network.HTTP.Client (HttpException)
 
-data Wiki = WikiText T.Text |
+newtype Wiki = Wiki{wikiList ::NonEmpty WikiNode} deriving (Show)
+
+data WikiNode = WikiText T.Text |
             WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |
             WikiLink T.Text [Wiki]|
             WikiHTMLTag T.Text (M.Map T.Text T.Text)|
-            WikiComment T.Text|
-            Wiki :> Wiki
+            WikiComment T.Text
             deriving (Show)
-infixr :>
 
 data HistoryError = HTTPError HttpException |
                     JsonParseError |

@@ -6,12 +6,15 @@ module NationsGraph.Wiki (
     redirectParser,
     wikiParser,
     getInfobox,
-    wikiToList,
+    wikiList,
     findTemplate,
 ) where
 
 import NationsGraph.Types
 
+import Data.List
+import Data.List.NonEmpty hiding (filter,map)
+import qualified Data.List.NonEmpty
 import qualified Data.Map as M
 import Data.Monoid
 import Data.Maybe
@@ -30,30 +33,27 @@ import Control.Error.Util
 
 import Safe
 
-wikiHead :: Wiki -> Wiki
-wikiHead (a :> b) = a
-wikiHead x = x
-
-wikiEmpty :: Wiki -> Bool
-wikiEmpty (WikiText t) = T.null t
-wikiEmpty _ = False
-
-wikiToList :: Wiki -> [Wiki]
-wikiToList (a :> b) = a : wikiToList b
-wikiToList x = [x]
+emptyNode :: WikiNode -> Bool
+emptyNode (WikiText t) = T.null t
+emptyNode _ = False
 
 wikiRemoveComments :: Wiki -> Maybe Wiki
 wikiRemoveComments =
-    fmap wikiFlatten .
-    foldl1May  (:>) .
-    filter (\case{WikiComment _ -> False; _ -> True}) .
-    wikiToList
+    fmap Wiki . nonEmpty .
+    Data.List.NonEmpty.filter (\case 
+        WikiComment _ -> False
+        _ -> True
+    ) .
+    wikiList
 
 wikiFlatten :: Wiki -> Wiki
-wikiFlatten (WikiText a :> WikiText b :> rest) = wikiFlatten $ WikiText (a<>b) :> rest
-wikiFlatten (WikiText a :> WikiText b) = WikiText (a<>b)
-wikiFlatten (a :> b) = a :> wikiFlatten b
-wikiFlatten a = a
+wikiFlatten (Wiki (x:|xs)) = case (x,foldl' wikiFlattenFold [] xs) of
+    (WikiText a, WikiText b:xs) -> Wiki $ WikiText (a<>b) :| xs
+    (_,ys) -> Wiki $ x:|ys  
+wikiFlattenFold :: [WikiNode] -> WikiNode -> [WikiNode]
+wikiFlattenFold (WikiText b:acc) (WikiText a) =
+    WikiText (a <> b) : acc
+wikiFlattenFold acc a = a:acc
 
 nonDouble :: Char -> AP.Parser Char
 nonDouble c = do
@@ -63,7 +63,7 @@ nonDouble c = do
         Just c' -> if c == c' then A.empty else return c
         Nothing -> return c
 
-xmlComment :: AP.Parser Wiki
+xmlComment :: AP.Parser WikiNode
 xmlComment = do
     "<!--"
     content <- many $ nonDash <|> singleDash
@@ -108,7 +108,6 @@ xmlSpecificTag name = do
     ">"<|> "/>"
     return (name, M.fromList attributes)
 
-wikiParser :: AP.Parser Wiki
 wikiParser = do
     begin <-xmlComment <|>
             wikiHTMLTagParser <|>
@@ -117,20 +116,20 @@ wikiParser = do
             WikiText <$> ("<"<|>">") <|>
             (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) A.empty ("{}[]"::String)) <|>
             (WikiText <$> AP.takeWhile (AP.notInClass "{}[]<>|"))
-    if wikiEmpty begin
-    then return begin
-    else (AP.endOfInput >> return begin) <|> do
-        next <- wikiParser
-        return $ if wikiEmpty next
-            then begin
-            else begin :> next
+    if emptyNode begin
+    then return $ Wiki $ begin:|[]
+    else (AP.endOfInput >> (return $ Wiki $ begin:|[])) <|> do
+        Wiki (n:|ns) <- wikiParser
+        return $ if emptyNode n
+            then Wiki $ begin:|[]
+            else Wiki $ begin:|(n:ns)
 
-wikiHTMLTagParser :: AP.Parser Wiki
+wikiHTMLTagParser :: AP.Parser WikiNode
 wikiHTMLTagParser = do
     (name, attributes) <- xmlTag
     return $ WikiHTMLTag name attributes
     
-wikiLinkParser :: AP.Parser Wiki
+wikiLinkParser :: AP.Parser WikiNode
 wikiLinkParser = do
     "[["
     first <- AP.takeWhile (\ c -> c /= '|' && c /= ']')
@@ -152,7 +151,7 @@ wikiTemplateUnNamedParameter = do
     "|"
     wikiParser
 
-wikiTemplateParser :: AP.Parser Wiki
+wikiTemplateParser :: AP.Parser WikiNode
 wikiTemplateParser = do
     "{{"
     title <- AP.takeWhile (\ c -> c /= '|' && c /= '}')
@@ -181,19 +180,17 @@ readYearMay :: T.Text -> Maybe Int
 readYearMay = either (const Nothing) Just .
     AP.parseOnly yearParser . T.strip
 
-findTemplate :: T.Text -> Wiki -> Maybe Wiki
+findTemplate :: T.Text -> Wiki -> Maybe WikiNode
 findTemplate target = getFirst . foldMap (First . 
     \case 
         t@(WikiTemplate title _ _) -> if T.toLower title == target then Just t else Nothing
         _ -> Nothing
-    ) . wikiToList
+    ) . wikiList
 
 propLookup :: T.Text -> M.Map T.Text Wiki -> Maybe T.Text
-propLookup prop props = case M.lookup prop props of
-    Just (WikiText x)   -> Just $ x
-    Just (WikiLink x _) -> Just $ x
-    Just (WikiText x :> _) -> Just $ x
-    Just (WikiLink x _ :> _) -> Just $ x
+propLookup prop props = case wikiList <$> M.lookup prop props of
+    Just (WikiText x:|_)   -> Just $ x
+    Just (WikiLink x _:|_) -> Just $ x
     _ -> Nothing
 
 getInfobox :: Wiki -> Either HistoryError Infobox
@@ -225,13 +222,13 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
                 in filter (not . null) <$> map (T.unpack . T.strip) <$> traverse propTextContent raw
 
             propTextContent :: Wiki -> Maybe T.Text
-            propTextContent (WikiText text) = Just text
-            propTextContent (WikiText text :> (WikiTemplate "!" _ _ :> _)) = Just text
-            propTextContent ((WikiText text :> WikiTemplate "!" _ _) :> _) = Just text
+            propTextContent (Wiki (WikiText text:|[])) = Just text
+            propTextContent (Wiki (WikiText text :| WikiTemplate "!" _ _ : _)) = Just text
             propTextContent _ = Nothing
 
             parents :: M.Map T.Text Wiki -> [String]
-            parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to wikiToList]
+            parents props = [T.unpack nationName |
+                WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
 
             name = fmap (T.unpack . T.strip) . propLookup "conventional_long_name"
 
