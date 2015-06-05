@@ -92,7 +92,7 @@ xmlAttribute = do
 
 xmlTag :: AP.Parser (T.Text,M.Map T.Text T.Text)
 xmlTag = do
-    "<" <|> "</"
+    "</" <|> "<"
     name <- xmlName
     attributes <- A.many $ AP.takeWhile isSpace *> xmlAttribute
     AP.takeWhile isSpace
