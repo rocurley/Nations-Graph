@@ -43,7 +43,9 @@ data HistoryError = HTTPError HttpException |
                     WikiParseError String |
                     MissingInfobox |
                     DoubleInfobox |
-                    InfoboxInterpretationError deriving Show
+                    InfoboxInterpretationError|
+                    PropInterpretationError T.Text|
+                    MissingInfoboxFieldError T.Text deriving Show
 
 type NationKey = String
 

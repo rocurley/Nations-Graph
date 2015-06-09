@@ -37,15 +37,6 @@ emptyNode :: WikiNode -> Bool
 emptyNode (WikiText t) = T.null t
 emptyNode _ = False
 
-wikiRemoveComments :: Wiki -> Maybe Wiki
-wikiRemoveComments =
-    fmap Wiki . nonEmpty .
-    Data.List.NonEmpty.filter (\case 
-        WikiComment _ -> False
-        _ -> True
-    ) .
-    wikiList
-
 wikiFlatten :: Wiki -> Wiki
 wikiFlatten (Wiki (x:|xs)) = case (x,foldl' wikiFlattenFold [] xs) of
     (WikiText a, WikiText b:xs) -> Wiki $ WikiText (a<>b) :| xs
@@ -176,8 +167,8 @@ yearParser = do
         AP.endOfInput
         return $ -absYear
 
-readYearMay :: T.Text -> Maybe Int
-readYearMay = either (const Nothing) Just .
+readYear :: T.Text -> Either HistoryError Int
+readYear = either (const $ Left $ PropInterpretationError "year") Right .
     AP.parseOnly yearParser . T.strip
 
 findTemplate :: T.Text -> Wiki -> Maybe WikiNode
@@ -187,11 +178,27 @@ findTemplate target = getFirst . foldMap (First .
         _ -> Nothing
     ) . wikiList
 
-propLookup :: T.Text -> M.Map T.Text Wiki -> Maybe T.Text
-propLookup prop props = case wikiList <$> M.lookup prop props of
-    Just (WikiText x:|_)   -> Just $ x
-    Just (WikiLink x _:|_) -> Just $ x
-    _ -> Nothing
+getPropAsText :: T.Text -> Bool -> M.Map T.Text Wiki -> Either HistoryError (Maybe T.Text)
+getPropAsText propName isAutoLinked propMap = sequence $ do
+    propVal <- M.lookup propName propMap
+    return $ case (wikiFilterNonText propVal,isAutoLinked) of
+        (Just (WikiText x:|_),_)   -> Right x
+        (Just (WikiLink x _:|_),False) -> Right x
+        (Just (WikiText text :| WikiTemplate "!" _ _ : _),True) -> Right x
+        _ -> PropInterpretationError propName
+
+wikiFilterNonText :: Wiki -> Maybe Wiki
+wikiFilterNonText =
+    fmap Wiki . nonEmpty .
+    Data.List.NonEmpty.filter (\case 
+        WikiComment _ -> False
+        WikiHTMLTag name -> case map toLower $ T.unpack name of
+            "br" -> False
+            "small" -> False
+            _ -> True
+        _ -> True
+    ) .
+    wikiList
 
 getInfobox :: Wiki -> Either HistoryError Infobox
 getInfobox wiki = case (findTemplate "infobox former country" wiki,
@@ -209,31 +216,47 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
             note InfoboxInterpretationError $
                 SubdivisionInfobox <$>
                 name props <*>
-                pure (startYear props) <*>
-                pure (endYear props) <*>
+                startYear props <*>
+                endYear props <*>
                 conn props 'p' <*>
                 conn props 's'<*>
                 pure (parents props)
         (Nothing,Nothing) -> Left MissingInfobox
         where
-            conn :: M.Map T.Text Wiki -> Char -> Maybe [String]
-            conn props ty = let
-                raw = mapMaybe (\ i -> wikiRemoveComments =<< M.lookup (T.pack $ ty:show i) props) [1..15]
-                in filter (not . null) <$> map (T.unpack . T.strip) <$> traverse propTextContent raw
-
-            propTextContent :: Wiki -> Maybe T.Text
-            propTextContent (Wiki (WikiText text:|[])) = Just text
-            propTextContent (Wiki (WikiText text :| WikiTemplate "!" _ _ : _)) = Just text
-            propTextContent _ = Nothing
+            conn :: M.Map T.Text Wiki -> Char -> Either HistoryError [String]
+            conn props ty = do
+                rawPropValues <- sequence [getOptionalField propName True props)
+                    i<-[1..15], let propName = T.pack $ ty:show i]
+                in filter (not . null) <$>
+                    map (T.unpack . T.strip) <$>
+                    catMaybes propValues
 
             parents :: M.Map T.Text Wiki -> [String]
             parents props = [T.unpack nationName |
                 WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
 
-            name = fmap (T.unpack . T.strip) . propLookup "conventional_long_name"
+            getMandatoryField :: T.Text -> Bool-> M.Map T.Text Wiki ->
+                Either HistoryError String
+            getMandatoryField fieldName isAutoLinked props = do
+                fieldMay <- getPropAsText isAutoLinked fieldName props
+                field <- note MissingInfoboxFieldError fieldName fieldMay
+                return $ T.unpack $ T.strip $ field
 
-            startYear :: M.Map T.Text Wiki -> Maybe Int
-            startYear = readYearMay <=< propLookup "year_start"
+            getOptionalField :: T.Text -> Bool-> M.Map T.Text Wiki ->
+                Either HistoryError (Maybe String)
+            getOptionalField fieldName isAutoLinked props = do
+                fieldMay <- getPropAsText isAutoLinked fieldName props
+                return $ fmap (T.unpack . T.strip) fieldMay
 
-            endYear :: M.Map T.Text Wiki -> Maybe Int
-            endYear = readYearMay <=< propLookup "year_end"
+            name :: M.Map T.Text Wiki -> Either HistoryError String
+            name = getMandatoryField "conventional_long_name" False
+
+            startYear :: M.Map T.Text Wiki -> Either HistoryError (Maybe Int)
+            startYear props = do
+                yearText <- getPropAsText False "year_start" props
+                traverse readYear yearText
+
+            endYear :: M.Map T.Text Wiki -> Either HistoryError (Maybe Int)
+            endYear props = do
+                yearText <- getPropAsText False "year_end" props
+                traverse readYear yearText
