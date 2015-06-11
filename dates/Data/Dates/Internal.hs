@@ -6,6 +6,8 @@ import Data.Char
 
 import Text.Parsec
 
+data Era = CE | BCE
+
 -- | Parser version of Prelude.read
 tryRead :: (Read a, Stream s m Char) => String -> ParsecT s st m a
 tryRead str =
@@ -44,12 +46,25 @@ number n m = do
     then fail "number too large"
     else return t
 
+pEra ∷ Stream s m Char => ParsecT s st m Era
+pEra = do
+  spaces
+  s ← many letter
+  case map toUpper s of
+    ""    → return CE
+    "CE"  → return CE
+    "AD"  → return CE
+    "BCE" → return BCE
+    "BC"  → return BCE
+    _ → fail "CE/AD/BCE/BC expected"
+
 pYear ∷ Stream s m Char => ParsecT s st m Int
 pYear = do
   y ← number 4 10000
-  if y < 2000
-    then return (y+2000)
-    else return y
+  era ← pEra
+  return $ case era of
+      CE → y
+      BCE → -y
 
 pMonth ∷ Stream s m Char => ParsecT s st m Int
 pMonth = number 2 12
