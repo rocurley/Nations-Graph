@@ -43,7 +43,6 @@ data HistoryError = HTTPError HttpException |
                     WikiParseError String |
                     MissingInfobox |
                     DoubleInfobox |
-                    InfoboxInterpretationError|
                     PropInterpretationError T.Text|
                     MissingInfoboxFieldError T.Text deriving Show
 
@@ -88,16 +87,22 @@ data BuildingNationGraph = BuildingNationGraph {
     _todo :: [String],
     _errors :: M.Map String HistoryError}
 
-data Infobox = NationInfobox{
-                    _name :: String,
-                    _start_year :: Maybe Int,
-                    _end_year :: Maybe Int,
-                    _precursors :: [String],
-                    _successors :: [String]} |
-                SubdivisionInfobox{
-                    _name :: String,
-                    _start_year :: Maybe Int,
-                    _end_year :: Maybe Int,
-                    _precursors :: [String],
-                    _successors :: [String],
-                    _parentCandidates :: [String]} deriving Show
+data Infobox =
+    FormerCountryInfobox{
+        _name :: String,
+        _start_date :: Maybe Date,
+        _end_date :: Maybe Date,
+        _precursors :: [String],
+        _successors :: [String]} |
+    ,
+FormerSubdivisionInfobox{
+        _name :: String,
+        _start_date :: Maybe Date,
+        _end_date :: Maybe Date,
+        _precursors :: [String],
+        _successors :: [String],
+        _parentCandidates :: [String]} |
+    CountryInfobox{
+        _name :: String,
+        _start_date :: Maybe Date,
+    } deriving Show

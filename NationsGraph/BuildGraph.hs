@@ -36,7 +36,8 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
                         then synonyms
                         else M.insert next name synonyms
                       insert :: Infobox -> BuildingNationGraph
-                      insert (NationInfobox n sy ey p s) = BuildingNationGraph
+                      insert (,
+FormerCountryInfobox n sy ey p s) = BuildingNationGraph
                         (M.insert
                             name 
                             (NationNode
@@ -50,7 +51,8 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
                         synonyms
                         (p++s++stack)
                         errors
-                      insert (SubdivisionInfobox n sy ey p s pc) = BuildingNationGraph 
+                      insert (,
+FormerSubdivisionInfobox n sy ey p s pc) = BuildingNationGraph 
                         nationsGraph
                         (M.insert
                             name

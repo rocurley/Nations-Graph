@@ -30,6 +30,7 @@ import Data.GraphViz.Printing hiding ((<>))
 import Data.Aeson
 import qualified Text.XML
 import Data.Graph.Inductive (Gr)
+import Data.Graph.Inductive.Graph
 
 import Web.Scotty
 --import Network.Wai.Middleware.Gzip
@@ -37,7 +38,7 @@ import Web.Scotty
 --TODO:
 --Non-ascii characters
 
-initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Roman Empire"] M.empty
+initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Ottoman Empire"] M.empty
 
 doIt :: Int -> BuildingNationGraph -> IO BuildingNationGraph
 doIt n graph= Sess.withSession (\ sess -> doIt' sess n graph) where
@@ -105,6 +106,7 @@ main = do
             result <- doIt n initialGraph
             print result
             let fglResult = toFGL result
+            putStrLn $ "Number of results: " ++ show (noNodes fglResult)
             writeFile "./out.tgf" $ toUnlabeledTGF fglResult
             BSC.writeFile "./out.json" $ encodePretty fglResult
         ["join"] -> do

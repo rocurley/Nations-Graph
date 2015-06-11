@@ -21,6 +21,8 @@ import Data.Maybe
 import Data.Char
 
 import Control.Monad
+import Control.Monad.Trans.Class
+import Control.Monad.Trans.Maybe
 import Control.Applicative as A
 
 import Control.Lens
@@ -157,7 +159,7 @@ redirectParser = do
     WikiLink link _ <- wikiLinkParser
     return link
 
-yearParser :: AP.Parser Int
+yearParser :: AP.Parser Date
 yearParser = do
     digits <- many $ AP.satisfy isDigit
     absYear <- maybe (fail "Year did not read as Int") return $ readMay digits 
@@ -179,20 +181,22 @@ findTemplate target = getFirst . foldMap (First .
     ) . wikiList
 
 getPropAsText :: T.Text -> Bool -> M.Map T.Text Wiki -> Either HistoryError (Maybe T.Text)
-getPropAsText propName isAutoLinked propMap = sequence $ do
-    propVal <- M.lookup propName propMap
-    return $ case (wikiFilterNonText propVal,isAutoLinked) of
-        (Just (WikiText x:|_),_)   -> Right x
-        (Just (WikiLink x _:|_),False) -> Right x
-        (Just (WikiText text :| WikiTemplate "!" _ _ : _),True) -> Right x
-        _ -> PropInterpretationError propName
+getPropAsText propName isAutoLinked propMap = runMaybeT $ do
+    propVal <- MaybeT $ return $ M.lookup propName propMap
+    filteredPropVal <- lift $ note (PropInterpretationError propName) $ 
+        wikiFilterNonText propVal
+    case (wikiList filteredPropVal,isAutoLinked) of
+        (WikiText text:|_,_)   -> return text
+        (WikiLink text _:|_,False) -> return text
+        (WikiText text :|(WikiTemplate "!" _ _ : _),True) -> return text
+        _ -> lift $ Left $ PropInterpretationError propName
 
 wikiFilterNonText :: Wiki -> Maybe Wiki
 wikiFilterNonText =
     fmap Wiki . nonEmpty .
     Data.List.NonEmpty.filter (\case 
         WikiComment _ -> False
-        WikiHTMLTag name -> case map toLower $ T.unpack name of
+        WikiHTMLTag name _ -> case map toLower $ T.unpack name of
             "br" -> False
             "small" -> False
             _ -> True
@@ -205,16 +209,16 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> Left DoubleInfobox
         (Just (WikiTemplate title _ props), Nothing) ->
-            note InfoboxInterpretationError $
-                NationInfobox <$>
+            ,
+FormerCountryInfobox <$>
                 name props <*>
-                pure (startYear props) <*>
-                pure (endYear props) <*>
+                startYear props <*>
+                endYear props <*>
                 conn props 'p' <*>
                 conn props 's'
         (Nothing, Just (WikiTemplate title _ props)) ->
-            note InfoboxInterpretationError $
-                SubdivisionInfobox <$>
+            ,
+FormerSubdivisionInfobox <$>
                 name props <*>
                 startYear props <*>
                 endYear props <*>
@@ -225,11 +229,10 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
         where
             conn :: M.Map T.Text Wiki -> Char -> Either HistoryError [String]
             conn props ty = do
-                rawPropValues <- sequence [getOptionalField propName True props)
+                rawPropValues <- sequence [getOptionalField propName True props|
                     i<-[1..15], let propName = T.pack $ ty:show i]
-                in filter (not . null) <$>
-                    map (T.unpack . T.strip) <$>
-                    catMaybes propValues
+                return $ filter (not . null) $
+                    catMaybes rawPropValues
 
             parents :: M.Map T.Text Wiki -> [String]
             parents props = [T.unpack nationName |
@@ -238,14 +241,14 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
             getMandatoryField :: T.Text -> Bool-> M.Map T.Text Wiki ->
                 Either HistoryError String
             getMandatoryField fieldName isAutoLinked props = do
-                fieldMay <- getPropAsText isAutoLinked fieldName props
-                field <- note MissingInfoboxFieldError fieldName fieldMay
+                fieldMay <- getPropAsText fieldName isAutoLinked props
+                field <- note (MissingInfoboxFieldError fieldName) fieldMay
                 return $ T.unpack $ T.strip $ field
 
             getOptionalField :: T.Text -> Bool-> M.Map T.Text Wiki ->
                 Either HistoryError (Maybe String)
             getOptionalField fieldName isAutoLinked props = do
-                fieldMay <- getPropAsText isAutoLinked fieldName props
+                fieldMay <- getPropAsText fieldName isAutoLinked props
                 return $ fmap (T.unpack . T.strip) fieldMay
 
             name :: M.Map T.Text Wiki -> Either HistoryError String
@@ -253,10 +256,10 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
 
             startYear :: M.Map T.Text Wiki -> Either HistoryError (Maybe Int)
             startYear props = do
-                yearText <- getPropAsText False "year_start" props
+                yearText <- getPropAsText "year_start" False props
                 traverse readYear yearText
 
             endYear :: M.Map T.Text Wiki -> Either HistoryError (Maybe Int)
             endYear props = do
-                yearText <- getPropAsText False "year_end" props
+                yearText <- getPropAsText "year_end" False props
                 traverse readYear yearText
