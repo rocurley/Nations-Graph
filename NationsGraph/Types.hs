@@ -11,11 +11,15 @@ module NationsGraph.Types (
     SubdivisionNode(..),
     BuildingNationGraph(..),
     HttpException,
+    DateTime(..),
     nationname,
     nationStartYear,
     nationEndYear,
     position,
 ) where
+
+import Data.Dates
+import Text.Parsec.Error
 
 import Data.List.NonEmpty
 import qualified Data.Map as M
@@ -44,6 +48,7 @@ data HistoryError = HTTPError HttpException |
                     MissingInfobox |
                     DoubleInfobox |
                     PropInterpretationError T.Text|
+                    DateParseError ParseError|
                     MissingInfoboxFieldError T.Text deriving Show
 
 type NationKey = String
@@ -90,19 +95,18 @@ data BuildingNationGraph = BuildingNationGraph {
 data Infobox =
     FormerCountryInfobox{
         _name :: String,
-        _start_date :: Maybe Date,
-        _end_date :: Maybe Date,
+        _start_date :: Maybe DateTime,
+        _end_date :: Maybe DateTime,
         _precursors :: [String],
         _successors :: [String]} |
-    ,
-FormerSubdivisionInfobox{
+    FormerSubdivisionInfobox{
         _name :: String,
-        _start_date :: Maybe Date,
-        _end_date :: Maybe Date,
+        _start_date :: Maybe DateTime,
+        _end_date :: Maybe DateTime,
         _precursors :: [String],
         _successors :: [String],
         _parentCandidates :: [String]} |
     CountryInfobox{
         _name :: String,
-        _start_date :: Maybe Date,
-    } deriving Show
+        _start_date :: Maybe DateTime}
+    deriving Show

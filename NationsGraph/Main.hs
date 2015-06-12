@@ -32,6 +32,8 @@ import qualified Text.XML
 import Data.Graph.Inductive (Gr)
 import Data.Graph.Inductive.Graph
 
+import Data.Dates
+
 import Web.Scotty
 --import Network.Wai.Middleware.Gzip
 

@@ -159,19 +159,10 @@ redirectParser = do
     WikiLink link _ <- wikiLinkParser
     return link
 
-yearParser :: AP.Parser Date
-yearParser = do
-    digits <- many $ AP.satisfy isDigit
-    absYear <- maybe (fail "Year did not read as Int") return $ readMay digits 
-    (AP.endOfInput >> return absYear) <|> do
-        many (AP.satisfy isSeparator)
-        "BC"
-        AP.endOfInput
-        return $ -absYear
-
-readYear :: T.Text -> Either HistoryError Int
-readYear = either (const $ Left $ PropInterpretationError "year") Right .
-    AP.parseOnly yearParser . T.strip
+--This needs to work for raw years. Pull in the yearParser.
+readDate :: T.Text -> Either HistoryError DateTime
+readDate = either (Left . DateParseError) Right .
+    parseDate . T.strip
 
 findTemplate :: T.Text -> Wiki -> Maybe WikiNode
 findTemplate target = getFirst . foldMap (First . 
@@ -209,16 +200,14 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> Left DoubleInfobox
         (Just (WikiTemplate title _ props), Nothing) ->
-            ,
-FormerCountryInfobox <$>
+            FormerCountryInfobox <$>
                 name props <*>
                 startYear props <*>
                 endYear props <*>
                 conn props 'p' <*>
                 conn props 's'
         (Nothing, Just (WikiTemplate title _ props)) ->
-            ,
-FormerSubdivisionInfobox <$>
+            FormerSubdivisionInfobox <$>
                 name props <*>
                 startYear props <*>
                 endYear props <*>
