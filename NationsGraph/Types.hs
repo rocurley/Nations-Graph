@@ -31,6 +31,26 @@ import Network.HTTP.Client (HttpException)
 
 newtype Wiki = Wiki{wikiList ::NonEmpty WikiNode} deriving (Show)
 
+data Good a = Good a | Bad HistoryError | No
+instance Functor Good where
+    fmap f (Good a) = Good $ f a
+    fmap _ x = x
+instance Applicative Good where
+    pure = Good
+    ap (Good f) (Good a) = Good $ f a
+    ap (Good f) x        = x
+    ap x        _        = x
+instance Monad Good where
+    return = Good
+    (Good a) >>= f = f a
+    x >>= f = x
+
+eitherToGood :: Either HistoryError a -> Good a
+eitherToGood = either Bad Good
+
+maybeToGood :: Maybe a -> Good a
+maybeToGood Nothing = maybe No Good
+
 data WikiNode = WikiText T.Text |
             WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |
             WikiLink T.Text [Wiki]|

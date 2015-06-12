@@ -167,29 +167,32 @@ yearParser = do
         AP.endOfInput
         return $ -absYear
 
-readYear :: T.Text -> Either HistoryError Int
-readYear = either (const $ Left $ PropInterpretationError "year") Right .
+readYear :: T.Text -> Good Int
+readYear = either (const $ Bad $ PropInterpretationError "year") Good .
     AP.parseOnly yearParser . T.strip
 
 findTemplate :: T.Text -> Wiki -> Maybe WikiNode
 findTemplate target = getFirst . foldMap (First . 
     \case 
-        t@(WikiTemplate title _ _) -> if T.toLower title == target then Just t else Nothing
+        t@(WikiTemplate title _ _) -> if T.toLower title == target
+                                        then Just t
+                                        else Nothing
         _ -> Nothing
     ) . wikiList
 
-getPropAsText :: T.Text -> Bool -> M.Map T.Text Wiki -> Either HistoryError (Maybe T.Text)
-getPropAsText propName isAutoLinked propMap = sequence $ do
-    propVal <- M.lookup propName propMap
-    return $ case (wikiFilterNonText propVal,isAutoLinked) of
-        (Just (WikiText x:|_),_)   -> Right x
-        (Just (WikiLink x _:|_),False) -> Right x
-        (Just (WikiText text :| WikiTemplate "!" _ _ : _),True) -> Right x
-        _ -> PropInterpretationError propName
+getPropAsText :: T.Text -> Bool -> M.Map T.Text Wiki -> Good T.Text
+getPropAsText propName isAutoLinked propMap = do
+    propVal <- maybeToGood $ M.lookup propName propMap
+    filteredPropVal <- wikiFilterNonText propVal
+    case (filteredPropVal,isAutoLinked) of
+        (WikiText x:|_,_)   -> return x
+        (WikiLink x _:|_,False) -> return x
+        (WikiText text :| WikiTemplate "!" _ _ : _,True) -> return x
+        _ -> Bad $ PropInterpretationError propName
 
-wikiFilterNonText :: Wiki -> Maybe Wiki
+wikiFilterNonText :: Wiki -> Good Wiki
 wikiFilterNonText =
-    fmap Wiki . nonEmpty .
+    maybeToGood . fmap Wiki . nonEmpty .
     Data.List.NonEmpty.filter (\case 
         WikiComment _ -> False
         WikiHTMLTag name -> case map toLower $ T.unpack name of
@@ -200,7 +203,7 @@ wikiFilterNonText =
     ) .
     wikiList
 
-getInfobox :: Wiki -> Either HistoryError Infobox
+getInfobox :: Wiki -> Good Infobox
 getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> Left DoubleInfobox
