@@ -10,11 +10,13 @@ module NationsGraph.Types (
     NationValue(..),
     SubdivisionNode(..),
     BuildingNationGraph(..),
+    Good(..),
     HttpException,
     nationname,
     nationStartYear,
     nationEndYear,
     position,
+    maybeToGood,
 ) where
 
 import Data.List.NonEmpty
@@ -34,22 +36,26 @@ newtype Wiki = Wiki{wikiList ::NonEmpty WikiNode} deriving (Show)
 data Good a = Good a | Bad HistoryError | No
 instance Functor Good where
     fmap f (Good a) = Good $ f a
-    fmap _ x = x
+    fmap _ (Bad err) = Bad err
+    fmap _ No = No
 instance Applicative Good where
     pure = Good
-    ap (Good f) (Good a) = Good $ f a
-    ap (Good f) x        = x
-    ap x        _        = x
+    Good f <*> Good a  = Good $ f a
+    Bad err <*> _ = Bad err
+    No <*> _ = No
+    _ <*> Bad err = Bad err
+    _ <*> No = No
 instance Monad Good where
     return = Good
     (Good a) >>= f = f a
-    x >>= f = x
+    Bad err >>= f = Bad err
+    No >>= f = No
 
 eitherToGood :: Either HistoryError a -> Good a
 eitherToGood = either Bad Good
 
 maybeToGood :: Maybe a -> Good a
-maybeToGood Nothing = maybe No Good
+maybeToGood = maybe No Good
 
 data WikiNode = WikiText T.Text |
             WikiTemplate T.Text [Wiki] (M.Map T.Text Wiki) |

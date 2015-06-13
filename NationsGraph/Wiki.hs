@@ -40,7 +40,7 @@ emptyNode _ = False
 wikiFlatten :: Wiki -> Wiki
 wikiFlatten (Wiki (x:|xs)) = case (x,foldl' wikiFlattenFold [] xs) of
     (WikiText a, WikiText b:xs) -> Wiki $ WikiText (a<>b) :| xs
-    (_,ys) -> Wiki $ x:|ys  
+    (_,ys) -> Wiki $ x:|ys
 wikiFlattenFold :: [WikiNode] -> WikiNode -> [WikiNode]
 wikiFlattenFold (WikiText b:acc) (WikiText a) =
     WikiText (a <> b) : acc
@@ -119,7 +119,7 @@ wikiHTMLTagParser :: AP.Parser WikiNode
 wikiHTMLTagParser = do
     (name, attributes) <- xmlTag
     return $ WikiHTMLTag name attributes
-    
+
 wikiLinkParser :: AP.Parser WikiNode
 wikiLinkParser = do
     "[["
@@ -148,7 +148,7 @@ wikiTemplateParser = do
     title <- AP.takeWhile (\ c -> c /= '|' && c /= '}')
     parameters <- A.many $ fmap Right wikiTemplateNamedParameter <|> fmap Left wikiTemplateUnNamedParameter
     "}}"
-    return $ WikiTemplate (T.strip title) [x | Left x <- parameters] $ M.fromList [x | Right x <- parameters] 
+    return $ WikiTemplate (T.strip title) [x | Left x <- parameters] $ M.fromList [x | Right x <- parameters]
 
 redirectParser :: AP.Parser T.Text
 redirectParser = do
@@ -160,7 +160,7 @@ redirectParser = do
 yearParser :: AP.Parser Int
 yearParser = do
     digits <- many $ AP.satisfy isDigit
-    absYear <- maybe (fail "Year did not read as Int") return $ readMay digits 
+    absYear <- maybe (fail "Year did not read as Int") return $ readMay digits
     (AP.endOfInput >> return absYear) <|> do
         many (AP.satisfy isSeparator)
         "BC"
@@ -172,8 +172,8 @@ readYear = either (const $ Bad $ PropInterpretationError "year") Good .
     AP.parseOnly yearParser . T.strip
 
 findTemplate :: T.Text -> Wiki -> Maybe WikiNode
-findTemplate target = getFirst . foldMap (First . 
-    \case 
+findTemplate target = getFirst . foldMap (First .
+    \case
         t@(WikiTemplate title _ _) -> if T.toLower title == target
                                         then Just t
                                         else Nothing
@@ -184,18 +184,18 @@ getPropAsText :: T.Text -> Bool -> M.Map T.Text Wiki -> Good T.Text
 getPropAsText propName isAutoLinked propMap = do
     propVal <- maybeToGood $ M.lookup propName propMap
     filteredPropVal <- wikiFilterNonText propVal
-    case (filteredPropVal,isAutoLinked) of
+    case (wikiList filteredPropVal,isAutoLinked) of
         (WikiText x:|_,_)   -> return x
         (WikiLink x _:|_,False) -> return x
-        (WikiText text :| WikiTemplate "!" _ _ : _,True) -> return x
+        (WikiText text :| WikiTemplate "!" _ _ : _,True) -> return text
         _ -> Bad $ PropInterpretationError propName
 
 wikiFilterNonText :: Wiki -> Good Wiki
 wikiFilterNonText =
     maybeToGood . fmap Wiki . nonEmpty .
-    Data.List.NonEmpty.filter (\case 
+    Data.List.NonEmpty.filter (\case
         WikiComment _ -> False
-        WikiHTMLTag name -> case map toLower $ T.unpack name of
+        WikiHTMLTag name _ -> case map toLower $ T.unpack name of
             "br" -> False
             "small" -> False
             _ -> True
@@ -203,36 +203,34 @@ wikiFilterNonText =
     ) .
     wikiList
 
-getInfobox :: Wiki -> Good Infobox
+getInfobox :: Wiki -> Either HistoryError Infobox
 getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> Left DoubleInfobox
         (Just (WikiTemplate title _ props), Nothing) ->
-            note InfoboxInterpretationError $
-                NationInfobox <$>
-                name props <*>
-                pure (startYear props) <*>
-                pure (endYear props) <*>
-                conn props 'p' <*>
-                conn props 's'
+              NationInfobox <$>
+              name props <*>
+              startYear props <*>
+              endYear props <*>
+              conn props 'p' <*>
+              conn props 's'
         (Nothing, Just (WikiTemplate title _ props)) ->
-            note InfoboxInterpretationError $
-                SubdivisionInfobox <$>
-                name props <*>
-                startYear props <*>
-                endYear props <*>
-                conn props 'p' <*>
-                conn props 's'<*>
-                pure (parents props)
+              SubdivisionInfobox <$>
+              name props <*>
+              startYear props <*>
+              endYear props <*>
+              conn props 'p' <*>
+              conn props 's'<*>
+              pure (parents props)
         (Nothing,Nothing) -> Left MissingInfobox
         where
             conn :: M.Map T.Text Wiki -> Char -> Either HistoryError [String]
             conn props ty = do
-                rawPropValues <- sequence [getOptionalField propName True props)
+                rawPropValues <- sequence [getOptionalField propName True props|
                     i<-[1..15], let propName = T.pack $ ty:show i]
-                in filter (not . null) <$>
+                return $ filter (not . null) <$>
                     map (T.unpack . T.strip) <$>
-                    catMaybes propValues
+                    catMaybes rawPropValues
 
             parents :: M.Map T.Text Wiki -> [String]
             parents props = [T.unpack nationName |
@@ -245,7 +243,7 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
                 field <- note MissingInfoboxFieldError fieldName fieldMay
                 return $ T.unpack $ T.strip $ field
 
-            getOptionalField :: T.Text -> Bool-> M.Map T.Text Wiki ->
+            getOptionalField :: T.Text -> Bool -> M.Map T.Text Wiki ->
                 Either HistoryError (Maybe String)
             getOptionalField fieldName isAutoLinked props = do
                 fieldMay <- getPropAsText isAutoLinked fieldName props
