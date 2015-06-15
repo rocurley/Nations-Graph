@@ -1,4 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module NationsGraph.Types (
     Wiki(..),
@@ -73,12 +76,21 @@ type ErrorHandling = ErrorHandlingT Identity
 
 type ErrorHandlingT m = EitherT HistoryError (WriterT ErrorLog (ReaderT ErrorContext m))
 
+class (Monad e, Monad m) => MonadEither l m e where
+  runMonadEitherT :: e a -> m (Either l a)
+
+instance Monad m => MonadEither l m (EitherT l m) where
+  runMonadEitherT = runEitherT
+
+instance Monad m => MonadEither l m (Either l) where
+  runMonadEitherT = return
+
 rebaseErrorHandling :: Monad m => ErrorHandling a -> ErrorHandlingT m a
 rebaseErrorHandling = mapEitherT $ mapWriterT $ mapReaderT $ return . runIdentity
 
-discardError ::  Monad m => EitherT HistoryError m a -> ErrorHandlingT m  (Maybe a)
+discardError :: MonadEither HistoryError m e=> e a -> ErrorHandlingT m  (Maybe a)
 discardError eitherT = do
-  either <- lift $ lift $ lift $ runEitherT eitherT
+  either <- lift $ lift $ lift $ runMonadEitherT eitherT
   case either of
     Right a -> return (Just a)
     Left err -> do
@@ -86,9 +98,9 @@ discardError eitherT = do
       lift $ tell $ ErrorLog $ Map.singleton context [err]
       return Nothing
 
-raiseError :: Monad m => EitherT HistoryError m a -> ErrorHandlingT m a
+raiseError :: MonadEither HistoryError m e=> e a -> ErrorHandlingT m a
 raiseError eitherT = do
-  either <- lift $ lift $ lift $ runEitherT eitherT
+  either <- lift $ lift $ lift $ runMonadEitherT eitherT
   case either of
     Right a -> return a
     Left err -> do
