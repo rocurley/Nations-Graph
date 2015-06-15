@@ -71,21 +71,30 @@ instance Monoid ErrorLog where
 
 type ErrorHandling = ErrorHandlingT Identity
 
-type ErrorHandlingT m = ReaderT ErrorContext (EitherT HistoryError (WriterT ErrorLog m))
+type ErrorHandlingT m = EitherT HistoryError (WriterT ErrorLog (ReaderT ErrorContext m))
+
+rebaseErrorHandling :: Monad m => ErrorHandling a -> ErrorHandlingT m a
+rebaseErrorHandling = mapEitherT $ mapWriterT $ mapReaderT $ return . runIdentity
 
 discardError ::  Monad m => EitherT HistoryError m a -> ErrorHandlingT m  (Maybe a)
-discardError (Left err) = do
-  context <- ask
-  lift $ lift $ tell $ ErrorLog $ Map.singleton context [err]
-  return Nothing
-discardError (Right a) = return (Just a)
+discardError eitherT = do
+  either <- lift $ lift $ lift $ runEitherT eitherT
+  case either of
+    Right a -> return (Just a)
+    Left err -> do
+      context <- lift $ lift $ ask
+      lift $ tell $ ErrorLog $ Map.singleton context [err]
+      return Nothing
 
 raiseError :: Monad m => EitherT HistoryError m a -> ErrorHandlingT m a
-raiseError (Left err) = do
-  context <- ask
-  lift $ lift $ tell $ ErrorLog $ Map.singleton context [err]
-  lift $ left err
-raiseError (Right a) = return a
+raiseError eitherT = do
+  either <- lift $ lift $ lift $ runEitherT eitherT
+  case either of
+    Right a -> return a
+    Left err -> do
+      context <- lift $ lift $ ask
+      lift $ tell $ ErrorLog $ Map.singleton context [err]
+      left err
 
 type NationKey = String
 
