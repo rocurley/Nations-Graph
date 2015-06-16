@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module NationsGraph.Types (
     Wiki(..),
@@ -17,7 +18,9 @@ module NationsGraph.Types (
     NationValue(..),
     SubdivisionNode(..),
     BuildingNationGraph(..),
+    MonadEither(..),
     HttpException,
+    rebaseErrorHandling,
     discardError,
     raiseError,
     nationname,
@@ -76,13 +79,16 @@ type ErrorHandling = ErrorHandlingT Identity
 
 type ErrorHandlingT m = EitherT HistoryError (WriterT ErrorLog (ReaderT ErrorContext m))
 
-class (Monad e, Monad m) => MonadEither l m e where
+liftErrorHandlingT :: Monad m => m a -> ErrorHandlingT m a
+liftErrorHandlingT = lift . lift . lift
+
+class (Monad e, Monad m) => MonadEither l m e | e -> l m where
   runMonadEitherT :: e a -> m (Either l a)
 
 instance Monad m => MonadEither l m (EitherT l m) where
   runMonadEitherT = runEitherT
 
-instance Monad m => MonadEither l m (Either l) where
+instance MonadEither l Identity (Either l) where
   runMonadEitherT = return
 
 rebaseErrorHandling :: Monad m => ErrorHandling a -> ErrorHandlingT m a
@@ -90,7 +96,7 @@ rebaseErrorHandling = mapEitherT $ mapWriterT $ mapReaderT $ return . runIdentit
 
 discardError :: MonadEither HistoryError m e=> e a -> ErrorHandlingT m  (Maybe a)
 discardError eitherT = do
-  either <- lift $ lift $ lift $ runMonadEitherT eitherT
+  either <- liftErrorHandlingT $ runMonadEitherT eitherT
   case either of
     Right a -> return (Just a)
     Left err -> do
@@ -98,9 +104,9 @@ discardError eitherT = do
       lift $ tell $ ErrorLog $ Map.singleton context [err]
       return Nothing
 
-raiseError :: MonadEither HistoryError m e=> e a -> ErrorHandlingT m a
+raiseError :: MonadEither HistoryError m e => e a -> ErrorHandlingT m a
 raiseError eitherT = do
-  either <- lift $ lift $ lift $ runMonadEitherT eitherT
+  either <- liftErrorHandlingT $ runMonadEitherT eitherT
   case either of
     Right a -> return a
     Left err -> do

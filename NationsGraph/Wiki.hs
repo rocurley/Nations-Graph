@@ -202,7 +202,7 @@ wikiFilterNonText =
     ) .
     wikiList
 
-getInfobox :: Monad m => Wiki -> ErrorHandlingT m Infobox
+getInfobox :: Wiki -> ErrorHandling Infobox
 getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> raiseError $ Left DoubleInfobox
@@ -223,7 +223,7 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
               pure (parents props)
         (Nothing,Nothing) -> raiseError $ Left MissingInfobox
         where
-            conn :: Monad m => M.Map T.Text Wiki -> Char -> ErrorHandlingT m [String]
+            conn :: M.Map T.Text Wiki -> Char -> ErrorHandling [String]
             conn props ty = do
                 rawPropValues <- (sequence [getOptionalField propName AutoLinked props|
                     i<-[1..15], let propName = T.pack $ ty:show i])
@@ -232,26 +232,26 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
             parents :: M.Map T.Text Wiki -> [String]
             parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
 
-            getMandatoryField :: Monad m => T.Text -> AutoLinkedFlag -> M.Map T.Text Wiki -> ErrorHandlingT m String
+            getMandatoryField :: T.Text -> AutoLinkedFlag -> M.Map T.Text Wiki -> ErrorHandling String
             getMandatoryField fieldName isAutoLinked props = do
                 fieldMay <- raiseError $ getPropAsText fieldName isAutoLinked props
                 field <- raiseError $ note (MissingInfoboxFieldError fieldName) fieldMay
                 return $ T.unpack $ T.strip $ field
 
-            getOptionalField :: Monad m => T.Text -> AutoLinkedFlag -> M.Map T.Text Wiki -> ErrorHandlingT m (Maybe String)
+            getOptionalField :: T.Text -> AutoLinkedFlag -> M.Map T.Text Wiki -> ErrorHandling (Maybe String)
             getOptionalField fieldName isAutoLinked props = do
                 fieldMay <- fmap join $ discardError $ getPropAsText fieldName isAutoLinked props
                 return $ T.unpack . T.strip <$> fieldMay
 
-            name :: Monad m => M.Map T.Text Wiki -> ErrorHandlingT m String
+            name :: M.Map T.Text Wiki -> ErrorHandling String
             name = getMandatoryField "conventional_long_name" NotAutoLinked
 
-            startYear :: Monad m => M.Map T.Text Wiki -> ErrorHandlingT m (Maybe Int)
+            startYear :: M.Map T.Text Wiki -> ErrorHandling (Maybe Int)
             startYear props = runMaybeT $ do
                 yearText <- MaybeT $ getOptionalField "year_start" NotAutoLinked props
                 MaybeT $ discardError $ readYear yearText
 
-            endYear :: Monad m => M.Map T.Text Wiki -> ErrorHandlingT m (Maybe Int)
+            endYear :: M.Map T.Text Wiki -> ErrorHandling (Maybe Int)
             endYear props = runMaybeT $ do
                 yearText <- MaybeT $ getOptionalField "year_end" NotAutoLinked props
                 MaybeT $ discardError $ readYear yearText

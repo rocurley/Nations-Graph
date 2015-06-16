@@ -38,8 +38,8 @@ getWiki sess article = do
                param "rvprop" .~ ["content"] $
                param "format" .~ ["json"] $
                param "titles" .~ [T.pack tweakedName] $ defaults
-    rawResp <- liftIO $ try (Sess.getWith opts sess wikiAPI)
-    resp <- raiseError rawResp
+    resp <- raiseError $ EitherT $ mapped._Left%~HTTPError $
+      try (Sess.getWith opts sess wikiAPI)
     source <- raiseError $ failWith JsonParseError $
       (resp^?responseBody
         .key "query"
@@ -55,10 +55,10 @@ getWiki sess article = do
 
 httpGetInfobox :: Sess.Session -> String -> ErrorHandlingT IO (String,Infobox)
 httpGetInfobox sess target =  do
-  (cannonicalName,wiki) <- raiseError <$> getWiki sess target
+  (cannonicalName,wiki) <- getWiki sess target
   --The endOfInput won't work unless the wiki parser is improved.
   --See the result for French Thrid Republic for a hint.
   --parse <- EitherT $ return $ (_Left%~WikiParseError) $ parseOnly (wikiParser<*endOfInput) wiki
-  parse <- raiseError $  (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki
-  infobox <- getInfobox parse
+  parse <- rebaseErrorHandling $ raiseError $  (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki
+  infobox <- rebaseErrorHandling $ getInfobox parse
   return (cannonicalName,infobox)
