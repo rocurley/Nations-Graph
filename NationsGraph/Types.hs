@@ -20,6 +20,7 @@ module NationsGraph.Types (
     BuildingNationGraph(..),
     MonadEither(..),
     HttpException,
+    ErrorLog(..),
     rebaseErrorHandling,
     discardError,
     raiseError,
@@ -109,10 +110,7 @@ raiseError eitherT = do
   either <- liftErrorHandlingT $ runMonadEitherT eitherT
   case either of
     Right a -> return a
-    Left err -> do
-      context <- lift $ lift $ ask
-      lift $ tell $ ErrorLog $ Map.singleton context [err]
-      left err
+    Left err -> left err -- Errors will be logged higher up.
 
 type NationKey = String
 
@@ -152,8 +150,7 @@ data BuildingNationGraph = BuildingNationGraph {
     _nations :: (Map NationKey NationNode),
     _subdivisions :: (Map NationKey SubdivisionNode),
     _synonyms :: (Map String NationKey),
-    _todo :: [String],
-    _errors :: Map String HistoryError}
+    _todo :: [String]}
 
 data Infobox = NationInfobox{
                     _name :: String,
@@ -161,6 +158,7 @@ data Infobox = NationInfobox{
                     _end_year :: Maybe Int,
                     _precursors :: [String],
                     _successors :: [String]} |
+
                 SubdivisionInfobox{
                     _name :: String,
                     _start_year :: Maybe Int,

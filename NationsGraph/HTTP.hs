@@ -18,8 +18,11 @@ import qualified Data.Text as T
 import qualified Data.Attoparsec.Text as AP
 
 import Control.Monad.Trans.Either
-import Control.Error.Util
+import Control.Monad.Trans.Writer
+import Control.Monad.Trans.Reader
 import Control.Monad.IO.Class
+
+import Control.Error.Util
 import Control.Exception
 
 import Network.Wreq
@@ -53,8 +56,8 @@ getWiki sess article = do
         Right link -> getWiki sess $ T.unpack link
         Left _ -> return (tweakedName,source)
 
-httpGetInfobox :: Sess.Session -> String -> ErrorHandlingT IO (String,Infobox)
-httpGetInfobox sess target =  do
+httpGetInfobox :: Sess.Session -> String -> EitherT HistoryError (WriterT ErrorLog IO) (String,Infobox)
+httpGetInfobox sess target =  mapEitherT (mapWriterT (`runReaderT` target)) $ do
   (cannonicalName,wiki) <- getWiki sess target
   --The endOfInput won't work unless the wiki parser is improved.
   --See the result for French Thrid Republic for a hint.

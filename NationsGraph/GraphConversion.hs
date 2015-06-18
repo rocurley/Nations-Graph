@@ -16,6 +16,7 @@ module NationsGraph.GraphConversion (
     svgToXHTML,
     mergeSvgXHTML,
     fillInSvg,
+    showBNG,
 ) where
 import NationsGraph.Types
 
@@ -52,7 +53,7 @@ addEdges (NationNode _ p1 s1)  (NationNode val p2 s2) =
         NationNode val (p1<>p2) (s1<>s2)
 
 toAdjacency :: BuildingNationGraph -> M.Map NationKey NationNode
-toAdjacency (BuildingNationGraph nations subdivisions synonyms _ _) = let
+toAdjacency (BuildingNationGraph nations subdivisions synonyms _) = let
     strictCannonicalNationName :: String -> Maybe NationKey
     strictCannonicalNationName name =
         if name `M.member` nations
@@ -70,7 +71,7 @@ toAdjacency (BuildingNationGraph nations subdivisions synonyms _ _) = let
         deSynonymized = fromMaybe name $ M.lookup name synonyms
         in fromMaybe deSynonymized $ M.lookup deSynonymized subdivisionKeyToNationKey
 
-    cannonicalNationsGraph = 
+    cannonicalNationsGraph =
         (\ (NationNode val p s) -> NationNode val
             (S.map cannonicalNationName p) (S.map cannonicalNationName s)) <$>
         nations
@@ -84,25 +85,25 @@ toAdjacency (BuildingNationGraph nations subdivisions synonyms _ _) = let
 showLifetime :: Maybe Int -> Maybe Int -> String
 showLifetime sy ey = "(" ++ maybe "?" show sy ++ " to " ++ maybe "?" show ey ++ ")"
 
-instance Show BuildingNationGraph where
-    show ng@(BuildingNationGraph _ _ synonyms todo errors) =
-        M.foldWithKey (\ k (NationNode (NationValue n sy ey _ key) p s) rest -> k ++
-                "\n\tname:\n\t\t" ++ n ++
-                "\n\tlifetime:\n\t\t" ++ showLifetime sy ey ++
-                "\n\tprecursors:" ++
-                foldMap ("\n\t\t"++) p ++
-                "\n\tsuccessors:" ++
-                foldMap ("\n\t\t"++) s ++
-                "\n\twikipedia article:\n\t\t" ++ key ++
-                "\n" ++ rest
-            ) ("remaining:"++show filteredTodo++
-               "\nsynonyms:"++ show synonyms++
-               "\nerrors:" ++ show errors) graph
-        where
-            graph = toAdjacency ng 
-            filteredTodo = [bestName | name <- todo,
-                                let bestName = fromMaybe name $ M.lookup name synonyms,
-                                not $ bestName `M.member` graph]
+showBNG :: BuildingNationGraph -> ErrorLog -> String
+showBNG ng@(BuildingNationGraph _ _ synonyms todo) errors =
+    M.foldWithKey (\ k (NationNode (NationValue n sy ey _ key) p s) rest -> k ++
+            "\n\tname:\n\t\t" ++ n ++
+            "\n\tlifetime:\n\t\t" ++ showLifetime sy ey ++
+            "\n\tprecursors:" ++
+            foldMap ("\n\t\t"++) p ++
+            "\n\tsuccessors:" ++
+            foldMap ("\n\t\t"++) s ++
+            "\n\twikipedia article:\n\t\t" ++ key ++
+            "\n" ++ rest
+        ) ("remaining:"++show filteredTodo++
+           "\nsynonyms:"++ show synonyms++
+           "\nerrors:" ++ show errors) graph
+    where
+        graph = toAdjacency ng
+        filteredTodo = [bestName | name <- todo,
+                            let bestName = fromMaybe name $ M.lookup name synonyms,
+                            not $ bestName `M.member` graph]
 
 toFGL :: BuildingNationGraph -> Gr NationValue ()
 toFGL nationGraph = let
@@ -135,7 +136,7 @@ toUnlabeledTGF graph = let
 toTGF :: Gr NationValue () -> String
 toTGF graph = let
     nodesStr = foldMap (\(i, NationValue name sy ey _ _) ->
-        show i ++ " " ++ name ++ "\\n" ++ 
+        show i ++ " " ++ name ++ "\\n" ++
         showLifetime sy ey ++ "\n") $ G.labNodes graph
     edgesStr = foldMap (\(i, j, _) -> show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
     in nodesStr ++ "#\n" ++ edgesStr
@@ -153,7 +154,7 @@ toGV graph = let
 
 instance ToJSON (Gr NationValue ()) where
     toJSON graph =  let
-        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey pos key) -> 
+        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey pos key) ->
                 object $ catMaybes [
                     Just ("id", toJSON i),
                     Just ("label", toJSON name),
@@ -164,7 +165,7 @@ instance ToJSON (Gr NationValue ()) where
                     Just ("wikiArticle", toJSON key)
                 ]
             ) $ G.labNodes graph
-        jsonEdges = toJSON $ map (\ (p,s,_) -> 
+        jsonEdges = toJSON $ map (\ (p,s,_) ->
                 object [
                     ("source", toJSON p),
                     ("target", toJSON s)
@@ -191,7 +192,7 @@ instance FromJSON (Gr NationValue ()) where
             ) $ V.toList jsonEdges
         return $ G.mkGraph nodes edges
 
-shapeNodes = 
+shapeNodes =
     root.
     named "graphml"./
     named "graph"./
@@ -222,7 +223,7 @@ nodeInfo f node = let
         node^? labelLens <*> node^? xLens <*> node^? yLens
     in case maybeTrio of
         Nothing -> pure node
-        Just trio -> fmap (\ (label,(x,y)) -> 
+        Just trio -> fmap (\ (label,(x,y)) ->
             labelLens.~label $ xLens.~x $ yLens.~y $ node) $ f trio
 
 loadPositionsFromGraphml :: Document -> [(Int,(Float,Float))]
@@ -260,7 +261,7 @@ svgToXHTML doc = let
 
 mergeSvgXHTML :: Document -> Document -> Document
 mergeSvgXHTML svgDoc xhtmlDoc = let
-    svgNodeList = shrinkSvg svgDoc^..root.named "svg".to NodeElement 
+    svgNodeList = shrinkSvg svgDoc^..root.named "svg".to NodeElement
     in root.named "html"./named "body".nodes %~ (++svgNodeList) $ xhtmlDoc
 
 shrinkSvg :: Document -> Document

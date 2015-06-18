@@ -9,6 +9,8 @@ import NationsGraph.Types
 import NationsGraph.BuildGraph
 import NationsGraph.GraphConversion
 
+import Control.Monad.Trans.Writer
+
 import Data.Monoid
 
 import qualified Data.Map as M
@@ -37,22 +39,15 @@ import Web.Scotty
 --TODO:
 --Non-ascii characters
 
-initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Roman Empire"] M.empty
+initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Roman Empire"]
 
-doIt :: Int -> BuildingNationGraph -> IO BuildingNationGraph
-doIt n graph= Sess.withSession (\ sess -> doIt' sess n graph) where
-    doIt' :: Sess.Session -> Int -> BuildingNationGraph -> IO BuildingNationGraph
+doIt :: Int -> BuildingNationGraph -> IO (BuildingNationGraph, ErrorLog)
+doIt n graph = Sess.withSession (\ sess -> runWriterT $ doIt' sess n graph) where
+    doIt' :: Sess.Session -> Int -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
     doIt' _ 0 graph = return $ graph
     doIt' sess n graph = do
         next <- getNext sess graph
         doIt' sess (n-1) next
-
-writeGraph = do
-    result <- doIt 10 initialGraph
-    print result
-    let fglResult = toFGL result
-    BSC.writeFile "./out.json" $ encodePretty fglResult
-    writeFile "./out.tgf" $ toUnlabeledTGF fglResult
 
 loadLayoutGraph :: IO (Gr NationValue ())
 loadLayoutGraph = do
@@ -82,7 +77,7 @@ runWebserver opts= do
                     Text.XML.renderText Text.XML.def svg
                 setHeader "Content-Type" "image/svg+xml"
             else do
-                html $ 
+                html $
                     --Text.XML.renderText (Text.XML.def{Text.XML.rsPretty = True})
                     Text.XML.renderText Text.XML.def page
                 setHeader "Content-Type" "application/xhtml+xml"
@@ -102,8 +97,8 @@ main = do
     case args of
         ["download",nStr] -> do
             let n = read nStr
-            result <- doIt n initialGraph
-            print result
+            (result,errors) <- doIt n initialGraph
+            putStrLn $ showBNG result errors
             let fglResult = toFGL result
             writeFile "./out.tgf" $ toUnlabeledTGF fglResult
             BSC.writeFile "./out.json" $ encodePretty fglResult

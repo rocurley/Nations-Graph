@@ -9,64 +9,67 @@ module NationsGraph.BuildGraph (
 import NationsGraph.Types
 import NationsGraph.HTTP
 
-import qualified Data.Map as M
-import qualified Data.Set as S
+import Control.Monad.Trans.Writer
+import Control.Monad.Trans.Either
+import Control.Monad.Trans.Class
+
+import qualified Data.Map as Map
+import Data.Map (Map)
+import qualified Data.Set as Set
+import Data.Set (Set)
 import Data.Maybe
 
 import qualified Network.Wreq.Session as Sess
 
-getNext :: Sess.Session -> BuildingNationGraph -> IO BuildingNationGraph
-getNext _ ng@(BuildingNationGraph _ _ _ [] _) = return ng
-getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack) errors) =
+getNext :: Sess.Session -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
+getNext _ ng@(BuildingNationGraph _ _ _ []) = return ng
+getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) =
     if examined
-    then getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack errors)
+    then getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack)
     else do
-        result <- httpGetInfobox sess bestName
+        result <- runEitherT $ httpGetInfobox sess bestName
         case result of
             Left err -> do
-                putStrLn $ show err ++ " for " ++ next
-                let newErrors = M.insert next err errors
-                getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack newErrors
+                lift $ putStrLn $ show err ++ " for " ++ next
+                tell $ ErrorLog $ Map.singleton next [err]
+                getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
             Right (name, infobox)-> do
-                if M.member name nationsGraph || M.member name subdivisionsGraph
-                then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph  newSynonyms stack errors
+                if Map.member name nationsGraph || Map.member name subdivisionsGraph
+                then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph  newSynonyms stack
                 else return $ insert infobox
                 where newSynonyms =
                         if next == name
                         then synonyms
-                        else M.insert next name synonyms
+                        else Map.insert next name synonyms
                       insert :: Infobox -> BuildingNationGraph
                       insert (NationInfobox n sy ey p s) = BuildingNationGraph
-                        (M.insert
-                            name 
+                        (Map.insert
+                            name
                             (NationNode
                                 (NationValue n sy ey Nothing name)
-                                (S.fromList p)
-                                (S.fromList s)
+                                (Set.fromList p)
+                                (Set.fromList s)
                             )
                             nationsGraph
                         )
                         subdivisionsGraph
                         synonyms
                         (p++s++stack)
-                        errors
-                      insert (SubdivisionInfobox n sy ey p s pc) = BuildingNationGraph 
+                      insert (SubdivisionInfobox n sy ey p s pc) = BuildingNationGraph
                         nationsGraph
-                        (M.insert
+                        (Map.insert
                             name
                             (SubdivisionNode
                                 (NationValue n sy ey Nothing name)
                                 pc
-                                (S.fromList p)
-                                (S.fromList s)
+                                (Set.fromList p)
+                                (Set.fromList s)
                             )
                             subdivisionsGraph
-                        ) 
+                        )
                         synonyms (p++s++stack)
-                        errors
     where
-        bestName = fromMaybe next (M.lookup next synonyms)
-        examined = 
-            bestName `M.member` nationsGraph ||
-            bestName `M.member` subdivisionsGraph ||
-            bestName `M.member` errors
+        bestName = fromMaybe next (Map.lookup next synonyms)
+        examined =
+            bestName `Map.member` nationsGraph ||
+            bestName `Map.member` subdivisionsGraph
