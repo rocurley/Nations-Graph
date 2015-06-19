@@ -39,10 +39,10 @@ emptyNode :: WikiNode -> Bool
 emptyNode (WikiText t) = T.null t
 emptyNode _ = False
 
-wikiFlatten :: Wiki -> Wiki
-wikiFlatten (Wiki (x:|xs)) = case (x,foldl' wikiFlattenFold [] xs) of
-    (WikiText a, WikiText b:xs) -> Wiki $ WikiText (a<>b) :| xs
-    (_,ys) -> Wiki $ x:|ys
+wikiFlatten :: WikiMarkup -> WikiMarkup
+wikiFlatten (WikiMarkup (x:|xs)) = case (x,foldl' wikiFlattenFold [] xs) of
+    (WikiText a, WikiText b:xs) -> WikiMarkup $ WikiText (a<>b) :| xs
+    (_,ys) -> WikiMarkup $ x:|ys
 wikiFlattenFold :: [WikiNode] -> WikiNode -> [WikiNode]
 wikiFlattenFold (WikiText b:acc) (WikiText a) =
     WikiText (a <> b) : acc
@@ -110,12 +110,12 @@ wikiParser = do
             (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) A.empty ("{}[]"::String)) <|>
             (WikiText <$> AP.takeWhile (AP.notInClass "{}[]<>|"))
     if emptyNode begin
-    then return $ Wiki $ begin:|[]
-    else (AP.endOfInput >> (return $ Wiki $ begin:|[])) <|> do
-        Wiki (n:|ns) <- wikiParser
+    then return $ WikiMarkup $ begin:|[]
+    else (AP.endOfInput >> (return $ WikiMarkup $ begin:|[])) <|> do
+        WikiMarkup (n:|ns) <- wikiParser
         return $ if emptyNode n
-            then Wiki $ begin:|[]
-            else Wiki $ begin:|(n:ns)
+            then WikiMarkup $ begin:|[]
+            else WikiMarkup $ begin:|(n:ns)
 
 wikiHTMLTagParser :: AP.Parser WikiNode
 wikiHTMLTagParser = do
@@ -131,7 +131,7 @@ wikiLinkParser = do
     "]]"
     return $ WikiLink first rest
 
-wikiTemplateNamedParameter :: AP.Parser (T.Text,Wiki)
+wikiTemplateNamedParameter :: AP.Parser (T.Text,WikiMarkup)
 wikiTemplateNamedParameter = do
     "|"
     key <- AP.takeWhile (\ c -> c /='|' && c /= '=' && c /= '}')
@@ -139,7 +139,7 @@ wikiTemplateNamedParameter = do
     value <- wikiParser
     return (T.strip key,value)
 
-wikiTemplateUnNamedParameter :: AP.Parser Wiki
+wikiTemplateUnNamedParameter :: AP.Parser WikiMarkup
 wikiTemplateUnNamedParameter = do
     "|"
     wikiParser
@@ -173,14 +173,14 @@ readYear :: String -> Either HistoryError Int
 readYear = either (const $ Left $ PropInterpretationError "year") Right .
     AP.parseOnly yearParser . T.strip . T.pack
 
-findTemplate :: T.Text -> Wiki -> Maybe WikiNode
+findTemplate :: T.Text -> WikiMarkup -> Maybe WikiNode
 findTemplate target = getFirst . foldMap (First .
     \case
         t@(WikiTemplate title _ _) -> if T.toLower title == target then Just t else Nothing
         _ -> Nothing
     ) . wikiList
 
-getPropAsText :: T.Text -> AutoLinkedFlag -> M.Map T.Text Wiki -> Either HistoryError (Maybe T.Text)
+getPropAsText :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> Either HistoryError (Maybe T.Text)
 getPropAsText propName isAutoLinked propMap = sequence $ do
     propVal <- M.lookup propName propMap
     return $ case (wikiList <$> wikiFilterNonText propVal,isAutoLinked) of
@@ -189,9 +189,9 @@ getPropAsText propName isAutoLinked propMap = sequence $ do
         (Just (WikiText text :| WikiTemplate "!" _ _ : _), AutoLinked) -> Right text
         _ -> Left $ PropInterpretationError propName
 
-wikiFilterNonText :: Wiki -> Maybe Wiki
+wikiFilterNonText :: WikiMarkup -> Maybe WikiMarkup
 wikiFilterNonText =
-    fmap Wiki . nonEmpty .
+    fmap WikiMarkup . nonEmpty .
     Data.List.NonEmpty.filter (\case
         WikiComment _ -> False
         WikiHTMLTag name _ -> case map toLower $ T.unpack name of
@@ -202,7 +202,7 @@ wikiFilterNonText =
     ) .
     wikiList
 
-getInfobox :: Wiki -> ErrorHandling Infobox
+getInfobox :: WikiMarkup -> ErrorHandling Infobox
 getInfobox wiki = case (findTemplate "infobox former country" wiki,
                         findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> raiseError $ Left DoubleInfobox
@@ -223,35 +223,35 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
               pure (parents props)
         (Nothing,Nothing) -> raiseError $ Left MissingInfobox
         where
-            conn :: M.Map T.Text Wiki -> Char -> ErrorHandling [String]
+            conn :: M.Map T.Text WikiMarkup -> Char -> ErrorHandling [String]
             conn props ty = do
                 rawPropValues <- (sequence [getOptionalField propName AutoLinked props|
                     i<-[1..15], let propName = T.pack $ ty:show i])
                 return $ filter (not . null) $ catMaybes rawPropValues
 
-            parents :: M.Map T.Text Wiki -> [String]
+            parents :: M.Map T.Text WikiMarkup -> [String]
             parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
 
-            getMandatoryField :: T.Text -> AutoLinkedFlag -> M.Map T.Text Wiki -> ErrorHandling String
+            getMandatoryField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling String
             getMandatoryField fieldName isAutoLinked props = do
                 fieldMay <- raiseError $ getPropAsText fieldName isAutoLinked props
                 field <- raiseError $ note (MissingInfoboxFieldError fieldName) fieldMay
                 return $ T.unpack $ T.strip $ field
 
-            getOptionalField :: T.Text -> AutoLinkedFlag -> M.Map T.Text Wiki -> ErrorHandling (Maybe String)
+            getOptionalField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
             getOptionalField fieldName isAutoLinked props = do
                 fieldMay <- fmap join $ discardError $ getPropAsText fieldName isAutoLinked props
                 return $ T.unpack . T.strip <$> fieldMay
 
-            name :: M.Map T.Text Wiki -> ErrorHandling String
+            name :: M.Map T.Text WikiMarkup -> ErrorHandling String
             name = getMandatoryField "conventional_long_name" NotAutoLinked
 
-            startYear :: M.Map T.Text Wiki -> ErrorHandling (Maybe Int)
+            startYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
             startYear props = runMaybeT $ do
                 yearText <- MaybeT $ getOptionalField "year_start" NotAutoLinked props
                 MaybeT $ discardError $ readYear yearText
 
-            endYear :: M.Map T.Text Wiki -> ErrorHandling (Maybe Int)
+            endYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
             endYear props = runMaybeT $ do
                 yearText <- MaybeT $ getOptionalField "year_end" NotAutoLinked props
                 MaybeT $ discardError $ readYear yearText

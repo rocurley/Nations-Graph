@@ -3,9 +3,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module NationsGraph.Types (
     Wiki(..),
+    WikiMarkup(..),
     WikiNode(..),
     Infobox(..),
     AutoLinkedFlag(..),
@@ -21,6 +23,8 @@ module NationsGraph.Types (
     MonadEither(..),
     HttpException,
     ErrorLog(..),
+    Licence(..),
+    apiEndpoint,
     rebaseErrorHandling,
     discardError,
     raiseError,
@@ -28,6 +32,7 @@ module NationsGraph.Types (
     nationStartYear,
     nationEndYear,
     position,
+    licenceTemplateName,
 ) where
 
 import Data.List.NonEmpty
@@ -48,11 +53,17 @@ import Control.Monad.Writer
 import Control.Monad.Trans.Either
 import Control.Monad.Trans.Reader
 
-newtype Wiki = Wiki{wikiList ::NonEmpty WikiNode} deriving (Show)
+data Wiki = Wikipedia | WikiCommons
+
+apiEndpoint :: Wiki -> String
+apiEndpoint Wikipedia = "http://en.wikipedia.org/w/api.php"
+apiEndpoint WikiCommons = "http://commons.wikimedia.org/w/api.php"
+
+newtype WikiMarkup = WikiMarkup{wikiList ::NonEmpty WikiNode} deriving (Show)
 
 data WikiNode = WikiText T.Text |
-            WikiTemplate T.Text [Wiki] (Map T.Text Wiki) |
-            WikiLink T.Text [Wiki]|
+            WikiTemplate T.Text [WikiMarkup] (Map T.Text WikiMarkup) |
+            WikiLink T.Text [WikiMarkup]|
             WikiHTMLTag T.Text (Map T.Text T.Text)|
             WikiComment T.Text
             deriving (Show)
@@ -62,9 +73,11 @@ data HistoryError = HTTPError HttpException |
                     WikiParseError String |
                     MissingInfobox |
                     DoubleInfobox |
-                    InfoboxInterpretationError|
-                    PropInterpretationError T.Text|
-                    MissingInfoboxFieldError T.Text deriving Show
+                    InfoboxInterpretationError |
+                    PropInterpretationError T.Text |
+                    MissingInfoboxFieldError T.Text |
+                    MissingImage |
+                    UnknownLicence deriving Show
 
 data AutoLinkedFlag = AutoLinked | NotAutoLinked
 
@@ -166,3 +179,8 @@ data Infobox = NationInfobox{
                     _precursors :: [String],
                     _successors :: [String],
                     _parentCandidates :: [String]} deriving Show
+
+data Licence = PdSelf
+
+licenceTemplateName :: Licence -> T.Text
+licenceTemplateName PdSelf = "pd-self"
