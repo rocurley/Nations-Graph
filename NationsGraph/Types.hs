@@ -24,6 +24,7 @@ module NationsGraph.Types (
     HttpException,
     ErrorLog(..),
     Licence(..),
+    Flag(..),
     apiEndpoint,
     rebaseErrorHandling,
     discardError,
@@ -127,6 +128,8 @@ raiseError eitherT = do
 
 type NationKey = String
 
+type URL = String
+
 data NationNode = NationNode
     {
         _nationValue :: NationValue,
@@ -145,11 +148,21 @@ data NationValue = NationValue
         _nationStartYear :: Maybe Int,
         _nationEndYear :: Maybe Int,
         _position :: Maybe (Float, Float),
-        _wikiArticle :: String
+        _wikiArticle :: String,
+        _flag :: Maybe Flag
     } deriving (Show, Ord, Eq)
+
+data Flag = Flag
+  {
+    _flagUrl :: URL
+  } deriving (Show, Ord, Eq)
+
+instance Arbitrary Flag where
+  arbitrary = Flag <$> arbitrary
+
 makeLenses ''NationValue
 instance Arbitrary NationValue where
-    arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+    arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
 
 data SubdivisionNode = SubdivisionNode
     {
@@ -166,21 +179,23 @@ data BuildingNationGraph = BuildingNationGraph {
     _todo :: [String]}
 
 data Infobox = NationInfobox{
-                    _name :: String,
-                    _start_year :: Maybe Int,
-                    _end_year :: Maybe Int,
-                    _precursors :: [String],
-                    _successors :: [String]} |
+                    _infoboxName :: String,
+                    _infoboxStart_year :: Maybe Int,
+                    _infoboxEnd_year :: Maybe Int,
+                    _infoboxFlag_name :: Maybe String,
+                    _infoboxPrecursors :: [String],
+                    _infoboxSuccessors :: [String]} |
 
                 SubdivisionInfobox{
-                    _name :: String,
-                    _start_year :: Maybe Int,
-                    _end_year :: Maybe Int,
-                    _precursors :: [String],
-                    _successors :: [String],
-                    _parentCandidates :: [String]} deriving Show
+                    _infoboxName :: String,
+                    _infoboxStart_year :: Maybe Int,
+                    _infoboxEnd_year :: Maybe Int,
+                    _infoboxFlag_name :: Maybe String,
+                    _infoboxPrecursors :: [String],
+                    _infoboxSuccessors :: [String],
+                    _infoboxParentCandidates :: [String]} deriving Show
 
-data Licence = PdSelf
+data Licence = PdSelf deriving Show
 
 licenceTemplateName :: Licence -> T.Text
 licenceTemplateName PdSelf = "pd-self"

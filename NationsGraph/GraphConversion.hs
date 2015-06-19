@@ -87,9 +87,10 @@ showLifetime sy ey = "(" ++ maybe "?" show sy ++ " to " ++ maybe "?" show ey ++ 
 
 showBNG :: BuildingNationGraph -> ErrorLog -> String
 showBNG ng@(BuildingNationGraph _ _ synonyms todo) errors =
-    M.foldWithKey (\ k (NationNode (NationValue n sy ey _ key) p s) rest -> k ++
+    M.foldWithKey (\ k (NationNode (NationValue n sy ey _ key flag) p s) rest -> k ++
             "\n\tname:\n\t\t" ++ n ++
             "\n\tlifetime:\n\t\t" ++ showLifetime sy ey ++
+            "\n\tflag:\n\t\t" ++ maybe "No Flag" _flagUrl flag ++
             "\n\tprecursors:" ++
             foldMap ("\n\t\t"++) p ++
             "\n\tsuccessors:" ++
@@ -119,7 +120,7 @@ toFGL nationGraph = let
     numberedNodesAscList = zip (S.toAscList nodes) [1..]
     keyToValue :: NationKey -> NationValue
     keyToValue k = case M.lookup k graph of
-        Nothing -> NationValue k Nothing Nothing Nothing k
+        Nothing -> NationValue k Nothing Nothing Nothing k Nothing
         Just (NationNode val _ _) -> val
     fglNodes = map (\ (k,i) -> (i, keyToValue k)) numberedNodesAscList
     numberedNodes = M.fromAscList numberedNodesAscList
@@ -135,7 +136,7 @@ toUnlabeledTGF graph = let
 
 toTGF :: Gr NationValue () -> String
 toTGF graph = let
-    nodesStr = foldMap (\(i, NationValue name sy ey _ _) ->
+    nodesStr = foldMap (\(i, NationValue name sy ey _ _ _) ->
         show i ++ " " ++ name ++ "\\n" ++
         showLifetime sy ey ++ "\n") $ G.labNodes graph
     edgesStr = foldMap (\(i, j, _) -> show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
@@ -154,7 +155,7 @@ toGV graph = let
 
 instance ToJSON (Gr NationValue ()) where
     toJSON graph =  let
-        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey pos key) ->
+        jsonNodes = toJSON $ map (\ (i,NationValue name sy ey pos key flag) ->
                 object $ catMaybes [
                     Just ("id", toJSON i),
                     Just ("label", toJSON name),
@@ -162,8 +163,9 @@ instance ToJSON (Gr NationValue ()) where
                     ("endYear",) <$> toJSON <$> ey,
                     ("x",) <$> toJSON <$> fst <$> pos,
                     ("y",) <$> toJSON <$> snd <$> pos,
-                    Just ("wikiArticle", toJSON key)
-                ]
+                    Just ("wikiArticle", toJSON key),
+                    ("flag",) <$> toJSON <$> _flagUrl <$> flag
+                  ]
             ) $ G.labNodes graph
         jsonEdges = toJSON $ map (\ (p,s,_) ->
                 object [
@@ -184,8 +186,9 @@ instance FromJSON (Gr NationValue ()) where
                 x <- node.:?"x"
                 y <- node.:?"y"
                 key <- node.:"wikiArticle"
+                flagUrl <- node.:?"flag"
                 let pos = (,) <$> x <*> y
-                return (id,NationValue label startYear endYear pos key)
+                return (id,NationValue label startYear endYear pos key (Flag <$> flagUrl))
             ) $ V.toList jsonNodes
         edges <- traverse (\ (Object edge) ->
                 (,,()) <$> edge.:"source" <*> edge.:"target"
@@ -320,7 +323,7 @@ tweakElement gr = execState $ do
     x <- use (id./named "rect".attr "x")
     y <- use (id./named "rect".attr "y")
     i <- read <$> T.unpack <$> use (id./named "text".text)
-    let Just (NationValue name sy ey _ wikiLink) = G.lab gr i
+    let Just (NationValue name sy ey _ wikiLink flag) = G.lab gr i
     width <- use (id./named "rect".attr "width")
     height <- use (id./named "rect".attr "height")
     nodes%=filter (\ node -> node^?_Element.localName /= Just "text")

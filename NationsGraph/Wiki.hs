@@ -211,6 +211,7 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
               name props <*>
               startYear props <*>
               endYear props <*>
+              flag props <*>
               conn props 'p' <*>
               conn props 's'
         (Nothing, Just (WikiTemplate title _ props)) ->
@@ -218,6 +219,7 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
               name props <*>
               startYear props <*>
               endYear props <*>
+              flag props <*>
               conn props 'p' <*>
               conn props 's'<*>
               pure (parents props)
@@ -245,6 +247,9 @@ getInfobox wiki = case (findTemplate "infobox former country" wiki,
 
             name :: M.Map T.Text WikiMarkup -> ErrorHandling String
             name = getMandatoryField "conventional_long_name" NotAutoLinked
+
+            flag :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
+            flag = getOptionalField "image_flag" AutoLinked
 
             startYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
             startYear props = runMaybeT $ do

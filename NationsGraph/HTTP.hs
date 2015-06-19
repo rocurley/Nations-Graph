@@ -35,12 +35,13 @@ import qualified Network.Wreq.Session as Sess
 
 import qualified Data.Aeson.Types as ATypes
 
-getWiki :: Sess.Session -> Wiki -> String -> ErrorHandlingT IO (String,T.Text,Maybe String)
+getWiki :: Sess.Session -> Wiki -> String -> ErrorHandlingT IO (String,T.Text,Maybe String,Maybe ATypes.Value)
 getWiki sess wiki article = do
     let api = apiEndpoint wiki
     let opts = param "action" .~ ["query"] $
-               param "prop" .~ ["revisions"] $
+               param "prop" .~ ["imageinfo|revisions"] $
                param "rvprop" .~ ["content"] $
+               param "iiprop" .~ ["url"] $
                param "format" .~ ["json"] $
                param "redirects" .~ [""] $
                param "titles" .~ [T.pack article] $ defaults
@@ -52,12 +53,12 @@ getWiki sess wiki article = do
       (resp^?pages.key "title"._String.to T.unpack :: Maybe String)
     source <- raiseError $ failWith JsonParseError $
       resp^?pages.key "revisions".nth 0.key "*"._String
-    let imageUrl = resp^?pages.key "imageinfo".key "url"._String.to T.unpack
-    return (title,source,imageUrl)
+    let imageUrl = resp^?pages.key "imageinfo".nth 0.key "url"._String.to T.unpack
+    return (title,source,imageUrl, resp^?pages)
 
 httpGetInfobox :: Sess.Session -> String -> EitherT HistoryError (WriterT ErrorLog IO) (String,Infobox)
 httpGetInfobox sess target =  mapEitherT (mapWriterT (`runReaderT` target)) $ do
-  (cannonicalName,wiki,_) <- getWiki sess Wikipedia target
+  (cannonicalName,wiki,_,_) <- getWiki sess Wikipedia target
   --The endOfInput won't work unless the wiki parser is improved.
   --See the result for French Thrid Republic for a hint.
   --parse <- EitherT $ return $ (_Left%~WikiParseError) $ parseOnly (wikiParser<*endOfInput) wiki
@@ -67,7 +68,7 @@ httpGetInfobox sess target =  mapEitherT (mapWriterT (`runReaderT` target)) $ do
 
 httpGetImage :: Sess.Session -> String -> EitherT HistoryError (WriterT ErrorLog IO)  (String, Licence)
 httpGetImage sess imageName = mapEitherT (mapWriterT (`runReaderT` imageName)) $ do
-  (_,wiki,imageUrlMay) <- getWiki sess WikiCommons imageName
+  (_,wiki,imageUrlMay,_) <- getWiki sess WikiCommons $ "file:" ++ imageName
   imageUrl <- rebaseErrorHandling $ raiseError $ note MissingImage imageUrlMay
   parse <- rebaseErrorHandling $ raiseError $  (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki
   licence <- rebaseErrorHandling $ raiseError $ note UnknownLicence $
