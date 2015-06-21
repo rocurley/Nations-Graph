@@ -33,7 +33,6 @@ module NationsGraph.Types (
     nationStartYear,
     nationEndYear,
     position,
-    licenceTemplateName,
 ) where
 
 import Data.List.NonEmpty
@@ -78,7 +77,7 @@ data HistoryError = HTTPError HttpException |
                     PropInterpretationError T.Text |
                     MissingInfoboxFieldError T.Text |
                     MissingImage |
-                    UnknownLicence deriving Show
+                    UnknownLicence String deriving Show
 
 data AutoLinkedFlag = AutoLinked | NotAutoLinked
 
@@ -195,7 +194,5 @@ data Infobox = NationInfobox{
                     _infoboxSuccessors :: [String],
                     _infoboxParentCandidates :: [String]} deriving Show
 
-data Licence = PdSelf deriving Show
-
-licenceTemplateName :: Licence -> T.Text
-licenceTemplateName PdSelf = "pd-self"
+data Licence =
+  PD deriving Show
