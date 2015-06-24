@@ -203,60 +203,58 @@ wikiFilterNonText =
     wikiList
 
 getInfobox :: WikiMarkup -> ErrorHandling Infobox
-getInfobox wiki = case (findTemplate "infobox former country" wiki,
-                        findTemplate "infobox former subdivision" wiki) of
+getInfobox wiki = do
+    (title, props, subdivisionInfo) <- case (findTemplate "infobox former country" wiki,
+          findTemplate "infobox former subdivision" wiki) of
         (Just _, Just _) -> raiseError $ Left DoubleInfobox
-        (Just (WikiTemplate title _ props), Nothing) ->
-              NationInfobox <$>
-              name props <*>
-              startYear props <*>
-              endYear props <*>
-              flag props <*>
-              conn props 'p' <*>
-              conn props 's'
-        (Nothing, Just (WikiTemplate title _ props)) ->
-              SubdivisionInfobox <$>
-              name props <*>
-              startYear props <*>
-              endYear props <*>
-              flag props <*>
-              conn props 'p' <*>
-              conn props 's'<*>
-              pure (parents props)
+        (Just (WikiTemplate title _ props), Nothing) -> return (title, props, Nothing)
+        (Nothing, Just (WikiTemplate title _ props)) -> return (title, props, Just $ parents props)
         (Nothing,Nothing) -> raiseError $ Left MissingInfobox
-        where
-            conn :: M.Map T.Text WikiMarkup -> Char -> ErrorHandling [String]
-            conn props ty = do
-                rawPropValues <- (sequence [getOptionalField propName AutoLinked props|
-                    i<-[1..15], let propName = T.pack $ ty:show i])
-                return $ filter (not . null) $ catMaybes rawPropValues
+    Infobox <$>
+      name props <*>
+      commonName props <*>
+      startYear props <*>
+      endYear props <*>
+      flag props <*>
+      conn props 'p' <*>
+      conn props 's'<*>
+      pure subdivisionInfo
+    where
+        conn :: M.Map T.Text WikiMarkup -> Char -> ErrorHandling [String]
+        conn props ty = do
+            rawPropValues <- (sequence [getOptionalField propName AutoLinked props|
+                i<-[1..15], let propName = T.pack $ ty:show i])
+            return $ filter (not . null) $ catMaybes rawPropValues
 
-            parents :: M.Map T.Text WikiMarkup -> [String]
-            parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
+        parents :: M.Map T.Text WikiMarkup -> [String]
+        parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
 
-            getMandatoryField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling String
-            getMandatoryField fieldName isAutoLinked props = do
-                fieldMay <- raiseError $ getPropAsText fieldName isAutoLinked props
-                field <- raiseError $ note (MissingInfoboxFieldError fieldName) fieldMay
-                return $ T.unpack $ T.strip $ field
+        getMandatoryField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling String
+        getMandatoryField fieldName isAutoLinked props = do
+            fieldMay <- raiseError $ getPropAsText fieldName isAutoLinked props
+            field <- raiseError $ note (MissingInfoboxFieldError fieldName) fieldMay
+            return $ T.unpack $ T.strip $ field
 
-            getOptionalField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
-            getOptionalField fieldName isAutoLinked props = do
-                fieldMay <- fmap join $ discardError $ getPropAsText fieldName isAutoLinked props
-                return $ T.unpack . T.strip <$> fieldMay
+        getOptionalField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
+        getOptionalField fieldName isAutoLinked props = do
+            fieldMay <- fmap join $ discardError $ getPropAsText fieldName isAutoLinked props
+            return $ T.unpack . T.strip <$> fieldMay
 
-            name :: M.Map T.Text WikiMarkup -> ErrorHandling String
-            name = getMandatoryField "conventional_long_name" NotAutoLinked
+        name :: M.Map T.Text WikiMarkup -> ErrorHandling String
+        name = getMandatoryField "conventional_long_name" NotAutoLinked
 
-            flag :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
-            flag = getOptionalField "image_flag" AutoLinked
+        commonName :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
+        commonName = getOptionalField "common_name" NotAutoLinked
 
-            startYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
-            startYear props = runMaybeT $ do
-                yearText <- MaybeT $ getOptionalField "year_start" NotAutoLinked props
-                MaybeT $ discardError $ readYear yearText
+        flag :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
+        flag = getOptionalField "image_flag" AutoLinked
 
-            endYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
-            endYear props = runMaybeT $ do
-                yearText <- MaybeT $ getOptionalField "year_end" NotAutoLinked props
-                MaybeT $ discardError $ readYear yearText
+        startYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
+        startYear props = runMaybeT $ do
+            yearText <- MaybeT $ getOptionalField "year_start" NotAutoLinked props
+            MaybeT $ discardError $ readYear yearText
+
+        endYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
+        endYear props = runMaybeT $ do
+            yearText <- MaybeT $ getOptionalField "year_end" NotAutoLinked props
+            MaybeT $ discardError $ readYear yearText

@@ -53,6 +53,10 @@ import Control.Monad.Writer
 import Control.Monad.Trans.Either
 import Control.Monad.Trans.Reader
 
+import Control.Error.Util
+
+import Control.Applicative
+
 data Wiki = Wikipedia | WikiCommons
 
 apiEndpoint :: Wiki -> String
@@ -107,6 +111,11 @@ instance MonadEither l Identity (Either l) where
 
 rebaseErrorHandling :: Monad m => ErrorHandling a -> ErrorHandlingT m a
 rebaseErrorHandling = mapEitherT $ mapWriterT $ mapReaderT $ return . runIdentity
+
+makeOptional :: Monad m => ErrorHandlingT m a -> ErrorHandlingT m (Maybe a)
+makeOptional thing = do
+  thing2 <- EitherT $ return <$> runEitherT thing
+  rebaseErrorHandling $ discardError thing2
 
 discardError :: MonadEither HistoryError m e=> e a -> ErrorHandlingT m  (Maybe a)
 discardError eitherT = do
@@ -177,22 +186,36 @@ data BuildingNationGraph = BuildingNationGraph {
     _synonyms :: (Map String NationKey),
     _todo :: [String]}
 
-data Infobox = NationInfobox{
-                    _infoboxName :: String,
-                    _infoboxStart_year :: Maybe Int,
-                    _infoboxEnd_year :: Maybe Int,
-                    _infoboxFlag_name :: Maybe String,
-                    _infoboxPrecursors :: [String],
-                    _infoboxSuccessors :: [String]} |
+data Infobox = Infobox{
+  _infoboxName :: String,
+  _infoboxCommonName :: Maybe String,
+  _infoboxStartYear :: Maybe Int,
+  _infoboxEndYear :: Maybe Int,
+  _infoboxFlagName :: Maybe String,
+  _infoboxPrecursors :: [String],
+  _infoboxSuccessors :: [String],
+  _infoboxSubdivision :: Maybe Subdivision
+}
 
-                SubdivisionInfobox{
-                    _infoboxName :: String,
-                    _infoboxStart_year :: Maybe Int,
-                    _infoboxEnd_year :: Maybe Int,
-                    _infoboxFlag_name :: Maybe String,
-                    _infoboxPrecursors :: [String],
-                    _infoboxSuccessors :: [String],
-                    _infoboxParentCandidates :: [String]} deriving Show
+infoboxToNode :: Monad m => (String -> ErrorHandlingT m Flag) -> Infobox -> String ->
+  ErrorHandlingT m (Either NationNode SubdivisionNode)
+infoboxToNode getFlag (Infobox name commonName sYear eYear maybeFlagName precursors successors subdivision) articleName = do
+  let
+    flagNameError :: Monad m => ErrorHandlingT m String --Note that it is not bound in the do block.
+    flagNameError = raiseError $ EitherT $ return $
+      note (MissingInfoboxFieldError "Nothing providing a flag name available") $
+      maybeFlagName <|> fmap (\name -> "Flag of " ++ name ++ ".svg") commonName
+  flag <- makeOptional $ do
+    flagName <- flagNameError
+    getFlag flagName
+  let
+    nationValue = NationValue name sYear eYear Nothing articleName flag
+    node = case subdivision of
+      Nothing -> Left $ NationNode nationValue (Set.fromList precursors) (Set.fromList successors)
+      Just possibleParents -> Right $ SubdivisionNode nationValue possibleParents (Set.fromList precursors) (Set.fromList successors)
+  return node
+
+type Subdivision = [String]
 
 data Licence =
   PD deriving Show

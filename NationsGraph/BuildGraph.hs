@@ -25,7 +25,7 @@ getNext :: Sess.Session -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNa
 getNext _ ng@(BuildingNationGraph _ _ _ []) = return ng
 getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) =
     if examined
-    then getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack)
+    then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
     else do
         result <- runEitherT $ httpGetInfobox sess bestName
         case result of
@@ -35,54 +35,55 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
                 getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
             Right (name, infobox)-> do
                 if Map.member name nationsGraph || Map.member name subdivisionsGraph
-                then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph  newSynonyms stack
+                then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph newSynonyms stack
                 else insert infobox
-                where newSynonyms =
-                        if next == name
-                        then synonyms
-                        else Map.insert next name synonyms
-                      getFlag :: Maybe String -> WriterT ErrorLog IO (Maybe Flag)
-                      getFlag flagName = do
-                          flagEither <- maybe
-                            (return $ Left $ MissingInfoboxFieldError "image_flag")
-                            (runEitherT . httpGetImage sess)
-                            flagName
-                          case flagEither of
-                            Left err -> do
-                              tell $ ErrorLog $ Map.singleton name [err]
-                              return Nothing
-                            Right (url,_) -> return $ Just $ Flag url
-                      insert :: Infobox -> WriterT ErrorLog IO BuildingNationGraph
-                      insert (NationInfobox n sy ey flagName p s) = do
-                          flag <- getFlag flagName
-                          return $ BuildingNationGraph
-                            (Map.insert
-                                name
-                                (NationNode
-                                    (NationValue n sy ey Nothing name flag)
-                                    (Set.fromList p)
-                                    (Set.fromList s)
-                                )
-                                nationsGraph
+                where
+                  newSynonyms =
+                    if next == name
+                    then synonyms
+                    else Map.insert next name synonyms
+                  getFlag :: Maybe String -> WriterT ErrorLog IO (Maybe Flag)
+                  getFlag flagName = do
+                      flagEither <- maybe
+                        (return $ Left $ MissingInfoboxFieldError "image_flag")
+                        (runEitherT . httpGetImage sess)
+                        flagName
+                      case flagEither of
+                        Left err -> do
+                          tell $ ErrorLog $ Map.singleton name [err]
+                          return Nothing
+                        Right (url,_) -> return $ Just $ Flag url
+                  insert :: Infobox -> WriterT ErrorLog IO BuildingNationGraph
+                  insert (NationInfobox n sy ey flagName p s) = do
+                      flag <- getFlag flagName
+                      return $ BuildingNationGraph
+                        (Map.insert
+                            name
+                            (NationNode
+                                (NationValue n sy ey Nothing name flag)
+                                (Set.fromList p)
+                                (Set.fromList s)
+                            )
+                            nationsGraph
+                        )
+                        subdivisionsGraph
+                        synonyms
+                        (p++s++stack)
+                  insert (SubdivisionInfobox n sy ey flagName p s pc) = do
+                      flag <- getFlag flagName
+                      return $ BuildingNationGraph
+                        nationsGraph
+                        (Map.insert
+                            name
+                            (SubdivisionNode
+                                (NationValue n sy ey Nothing name flag)
+                                pc
+                                (Set.fromList p)
+                                (Set.fromList s)
                             )
                             subdivisionsGraph
-                            synonyms
-                            (p++s++stack)
-                      insert (SubdivisionInfobox n sy ey flagName p s pc) = do
-                          flag <- getFlag flagName
-                          return $ BuildingNationGraph
-                            nationsGraph
-                            (Map.insert
-                                name
-                                (SubdivisionNode
-                                    (NationValue n sy ey Nothing name flag)
-                                    pc
-                                    (Set.fromList p)
-                                    (Set.fromList s)
-                                )
-                                subdivisionsGraph
-                            )
-                            synonyms (p++s++stack)
+                        )
+                        synonyms (p++s++stack)
     where
         bestName = fromMaybe next (Map.lookup next synonyms)
         examined =
