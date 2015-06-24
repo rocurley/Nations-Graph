@@ -33,6 +33,7 @@ module NationsGraph.Types (
     nationStartYear,
     nationEndYear,
     position,
+    infoboxToNode,
 ) where
 
 import Data.List.NonEmpty
@@ -95,7 +96,7 @@ instance Monoid ErrorLog where
 
 type ErrorHandling = ErrorHandlingT Identity
 
-type ErrorHandlingT m = EitherT HistoryError (WriterT ErrorLog (ReaderT ErrorContext m))
+type ErrorHandlingT m = EitherT HistoryError (ReaderT ErrorContext (WriterT ErrorLog m))
 
 liftErrorHandlingT :: Monad m => m a -> ErrorHandlingT m a
 liftErrorHandlingT = lift . lift . lift
@@ -110,7 +111,7 @@ instance MonadEither l Identity (Either l) where
   runMonadEitherT = return
 
 rebaseErrorHandling :: Monad m => ErrorHandling a -> ErrorHandlingT m a
-rebaseErrorHandling = mapEitherT $ mapWriterT $ mapReaderT $ return . runIdentity
+rebaseErrorHandling = mapEitherT $ mapReaderT $ mapWriterT $ return . runIdentity
 
 makeOptional :: Monad m => ErrorHandlingT m a -> ErrorHandlingT m (Maybe a)
 makeOptional thing = do
@@ -123,7 +124,7 @@ discardError eitherT = do
   case either of
     Right a -> return (Just a)
     Left err -> do
-      context <- lift $ lift $ ask
+      context <- lift $ ask
       lift $ tell $ ErrorLog $ Map.singleton context [err]
       return Nothing
 

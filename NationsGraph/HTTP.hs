@@ -57,8 +57,8 @@ getWiki sess wiki article = do
     let licenceStr = resp^?pages.key "imageinfo".nth 0.key "extmetadata".key "License".key "value"._String.to T.unpack
     return (title,source,imageUrl,licenceStr, resp^?pages)
 
-httpGetInfobox :: Sess.Session -> String -> EitherT HistoryError (WriterT ErrorLog IO) (String,Infobox)
-httpGetInfobox sess target =  mapEitherT (mapWriterT (`runReaderT` target)) $ do
+httpGetInfobox :: Sess.Session -> String -> ErrorHandlingT IO (String,Infobox)
+httpGetInfobox sess target =  do
   (cannonicalName,wiki,_,_,_) <- getWiki sess Wikipedia target
   --The endOfInput won't work unless the wiki parser is improved.
   --See the result for French Thrid Republic for a hint.
@@ -67,8 +67,8 @@ httpGetInfobox sess target =  mapEitherT (mapWriterT (`runReaderT` target)) $ do
   infobox <- rebaseErrorHandling $ getInfobox parse
   return (cannonicalName,infobox)
 
-httpGetImage :: Sess.Session -> String -> EitherT HistoryError (WriterT ErrorLog IO)  (String, Licence)
-httpGetImage sess imageName = mapEitherT (mapWriterT (`runReaderT` imageName)) $ do
+httpGetImage :: Sess.Session -> String -> ErrorHandlingT IO  (String, Licence)
+httpGetImage sess imageName =  do
   (_,wiki,imageUrlMay,licenceStr,_) <- getWiki sess WikiCommons $ "file:" ++ imageName
   imageUrl <- rebaseErrorHandling $ raiseError $ note MissingImage imageUrlMay
   parse <- rebaseErrorHandling $ raiseError $  (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki

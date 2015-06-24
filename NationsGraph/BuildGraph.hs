@@ -11,6 +11,7 @@ import NationsGraph.HTTP
 
 import Control.Monad.Trans.Writer
 import Control.Monad.Trans.Either
+import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Class
 
 import qualified Data.Map as Map
@@ -27,65 +28,44 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
     if examined
     then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
     else do
-        result <- runEitherT $ httpGetInfobox sess bestName
+        result <- (`runReaderT` bestName) $ runEitherT $ do
+          (realArticleName, infobox) <- httpGetInfobox sess bestName
+          node <- infoboxToNode getFlag infobox realArticleName
+          return (realArticleName, node)
         case result of
             Left err -> do
                 lift $ putStrLn $ show err ++ " for " ++ next
                 tell $ ErrorLog $ Map.singleton next [err]
                 getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
-            Right (name, infobox)-> do
-                if Map.member name nationsGraph || Map.member name subdivisionsGraph
+            Right (realArticleName, node)-> do
+                if Map.member realArticleName nationsGraph || Map.member realArticleName subdivisionsGraph
                 then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph newSynonyms stack
-                else insert infobox
+                else insert node
                 where
                   newSynonyms =
-                    if next == name
+                    if next == realArticleName
                     then synonyms
-                    else Map.insert next name synonyms
-                  getFlag :: Maybe String -> WriterT ErrorLog IO (Maybe Flag)
-                  getFlag flagName = do
-                      flagEither <- maybe
-                        (return $ Left $ MissingInfoboxFieldError "image_flag")
-                        (runEitherT . httpGetImage sess)
-                        flagName
-                      case flagEither of
-                        Left err -> do
-                          tell $ ErrorLog $ Map.singleton name [err]
-                          return Nothing
-                        Right (url,_) -> return $ Just $ Flag url
-                  insert :: Infobox -> WriterT ErrorLog IO BuildingNationGraph
-                  insert (NationInfobox n sy ey flagName p s) = do
-                      flag <- getFlag flagName
-                      return $ BuildingNationGraph
-                        (Map.insert
-                            name
-                            (NationNode
-                                (NationValue n sy ey Nothing name flag)
-                                (Set.fromList p)
-                                (Set.fromList s)
-                            )
-                            nationsGraph
-                        )
-                        subdivisionsGraph
-                        synonyms
-                        (p++s++stack)
-                  insert (SubdivisionInfobox n sy ey flagName p s pc) = do
-                      flag <- getFlag flagName
-                      return $ BuildingNationGraph
-                        nationsGraph
-                        (Map.insert
-                            name
-                            (SubdivisionNode
-                                (NationValue n sy ey Nothing name flag)
-                                pc
-                                (Set.fromList p)
-                                (Set.fromList s)
-                            )
+                    else Map.insert next realArticleName synonyms
+                  insert :: Either NationNode SubdivisionNode -> WriterT ErrorLog IO BuildingNationGraph
+                  insert nodeEither = return $ case nodeEither of
+                      Left node@(NationNode nationValue precursors successors) ->
+                          BuildingNationGraph
+                            (Map.insert realArticleName node nationsGraph)
                             subdivisionsGraph
-                        )
-                        synonyms (p++s++stack)
+                            synonyms
+                            (Set.toList precursors ++ Set.toList successors ++ stack)
+                      Right node@(SubdivisionNode nationValue possibleParents precursors successors) ->
+                          BuildingNationGraph
+                            nationsGraph
+                            (Map.insert realArticleName node subdivisionsGraph)
+                            synonyms
+                            (Set.toList precursors ++ Set.toList successors ++ stack)
     where
         bestName = fromMaybe next (Map.lookup next synonyms)
         examined =
             bestName `Map.member` nationsGraph ||
             bestName `Map.member` subdivisionsGraph
+        getFlag :: String -> ErrorHandlingT IO Flag
+        getFlag flagName = do
+          (flagUrl,licence) <- httpGetImage sess flagName
+          return $ Flag flagUrl
