@@ -39,7 +39,7 @@ import Web.Scotty
 --TODO:
 --Non-ascii characters
 
-initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Roman Empire"]
+initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Bourbon Restoration"]
 
 doIt :: Int -> BuildingNationGraph -> IO (BuildingNationGraph, ErrorLog)
 doIt n graph = Sess.withSession (\ sess -> runWriterT $ doIt' sess n graph) where
@@ -66,7 +66,9 @@ runWebserver opts= do
     --css <- cs <$> BSC.readFile "./style.css"
     let Just graph = decode json
     svg <- fillInSvg graph <$> Text.XML.readFile Text.XML.def "./out.svg"
-    template <- Text.XML.readFile Text.XML.def "./base.xhtml"
+    template <- if svgOnly opts
+                then return undefined
+                else Text.XML.readFile Text.XML.def "./base.xhtml"
     let page = mergeSvgXHTML svg template
     scotty 3000 $ do
         --middleware $ gzip def

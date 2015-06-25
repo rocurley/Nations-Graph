@@ -35,7 +35,7 @@ import qualified Network.Wreq.Session as Sess
 
 import qualified Data.Aeson.Types as ATypes
 
-getWiki :: Sess.Session -> Wiki -> String -> ErrorHandlingT IO (String,T.Text,Maybe String,Maybe String,Maybe ATypes.Value)
+getWiki :: Sess.Session -> Wiki -> String -> ErrorHandlingT IO (String,T.Text,Maybe (Image, String),Maybe ATypes.Value)
 getWiki sess wiki article = do
     let api = apiEndpoint wiki
     let opts = param "action" .~ ["query"] $
@@ -54,27 +54,26 @@ getWiki sess wiki article = do
     source <- raiseError $ failWith JsonParseError $
       resp^?pages.key "revisions".nth 0.key "*"._String
     let imageUrl = resp^?pages.key "imageinfo".nth 0.key "url"._String.to T.unpack
+    let imagedescriptionUrl = resp^?pages.key "imageinfo".nth 0.key "descriptionurl"._String.to T.unpack
     let licenceStr = resp^?pages.key "imageinfo".nth 0.key "extmetadata".key "License".key "value"._String.to T.unpack
-    return (title,source,imageUrl,licenceStr, resp^?pages)
+    let image = Image <$> imageUrl <*> imagedescriptionUrl
+    return (title, source, (,) <$> image <*> licenceStr, resp^?pages)
 
 httpGetInfobox :: Sess.Session -> String -> ErrorHandlingT IO (String,Infobox)
 httpGetInfobox sess target =  do
-  (cannonicalName,wiki,_,_,_) <- getWiki sess Wikipedia target
+  (cannonicalName,wiki,_,_) <- getWiki sess Wikipedia target
   --The endOfInput won't work unless the wiki parser is improved.
   --See the result for French Thrid Republic for a hint.
   --parse <- EitherT $ return $ (_Left%~WikiParseError) $ parseOnly (wikiParser<*endOfInput) wiki
   parse <- rebaseErrorHandling $ raiseError $  (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki
-  infobox <- rebaseErrorHandling $ getInfobox parse
+  infobox <- rebaseErrorHandling $ getInfobox (T.pack cannonicalName) parse
   return (cannonicalName,infobox)
 
-httpGetImage :: Sess.Session -> String -> ErrorHandlingT IO  (String, Licence)
+httpGetImage :: Sess.Session -> String -> ErrorHandlingT IO  (Image, License)
 httpGetImage sess imageName =  do
-  (_,wiki,imageUrlMay,licenceStr,_) <- getWiki sess WikiCommons $ "file:" ++ imageName
-  imageUrl <- rebaseErrorHandling $ raiseError $ note MissingImage imageUrlMay
+  (_,wiki,imageAndLicenseMay,_) <- getWiki sess WikiCommons $ "file:" ++ imageName
+  (image,licenseStr) <- rebaseErrorHandling $ raiseError $ note MissingImage imageAndLicenseMay
   parse <- rebaseErrorHandling $ raiseError $  (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki
-  licence <- rebaseErrorHandling $ raiseError $ case licenceStr of
-    Nothing -> Left JsonParseError
-    Just "pd" -> Right PD
-    Just unknown -> Left $ UnknownLicence unknown
-  return (imageUrl, licence)
+  license <- rebaseErrorHandling $ raiseError $ note (UnknownLicense licenseStr) $ parseLicense licenseStr
+  return (image, license)
 

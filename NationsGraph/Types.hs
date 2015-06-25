@@ -23,8 +23,8 @@ module NationsGraph.Types (
     MonadEither(..),
     HttpException,
     ErrorLog(..),
-    Licence(..),
-    Flag(..),
+    License(..),
+    Image(..),
     apiEndpoint,
     rebaseErrorHandling,
     discardError,
@@ -34,8 +34,13 @@ module NationsGraph.Types (
     nationEndYear,
     position,
     infoboxToNode,
+    parseLicense,
 ) where
 
+import Safe
+
+import Data.Maybe
+import Data.List
 import Data.List.NonEmpty
 import qualified Data.Map as Map
 import Data.Map (Map)
@@ -45,6 +50,8 @@ import Data.Set (Set)
 import qualified Data.Text as T
 
 import Test.QuickCheck
+
+import Data.Aeson hiding ((.=))
 
 import Control.Lens
 
@@ -82,7 +89,7 @@ data HistoryError = HTTPError HttpException |
                     PropInterpretationError T.Text |
                     MissingInfoboxFieldError T.Text |
                     MissingImage |
-                    UnknownLicence String deriving Show
+                    UnknownLicense String deriving Show
 
 data AutoLinkedFlag = AutoLinked | NotAutoLinked
 
@@ -158,16 +165,26 @@ data NationValue = NationValue
         _nationEndYear :: Maybe Int,
         _position :: Maybe (Float, Float),
         _wikiArticle :: String,
-        _flag :: Maybe Flag
+        _flag :: Maybe Image
     } deriving (Show, Ord, Eq)
 
-data Flag = Flag
+data Image = Image
   {
-    _flagUrl :: URL
+    _imageDirectURL  :: URL,
+    _imageLandingURL :: URL
   } deriving (Show, Ord, Eq)
 
-instance Arbitrary Flag where
-  arbitrary = Flag <$> arbitrary
+instance Arbitrary Image where
+  arbitrary = Image <$> arbitrary <*> arbitrary
+
+instance ToJSON Image where
+    toJSON (Image direct landing) = object [("directURL", toJSON direct), ("landingURL", toJSON landing)]
+
+instance FromJSON Image where
+    parseJSON (Object json) = do
+        direct <- json.:"directURL"
+        landing <- json.: "landingURL"
+        return $ Image direct landing
 
 makeLenses ''NationValue
 instance Arbitrary NationValue where
@@ -196,9 +213,9 @@ data Infobox = Infobox{
   _infoboxPrecursors :: [String],
   _infoboxSuccessors :: [String],
   _infoboxSubdivision :: Maybe Subdivision
-}
+} deriving Show
 
-infoboxToNode :: Monad m => (String -> ErrorHandlingT m Flag) -> Infobox -> String ->
+infoboxToNode :: Monad m => (String -> ErrorHandlingT m Image) -> Infobox -> String ->
   ErrorHandlingT m (Either NationNode SubdivisionNode)
 infoboxToNode getFlag (Infobox name commonName sYear eYear maybeFlagName precursors successors subdivision) articleName = do
   let
@@ -218,5 +235,11 @@ infoboxToNode getFlag (Infobox name commonName sYear eYear maybeFlagName precurs
 
 type Subdivision = [String]
 
-data Licence =
-  PD deriving Show
+data License = PD|CC0|CC_BY Float|CC_BY_SA Float deriving Show
+
+parseLicense :: String -> Maybe License
+parseLicense "pd" = Just PD
+parseLicense "cc0" = Just CC0
+parseLicense licenseString = headMay [license $ read versionString |
+                               (license,prefix)<-[(CC_BY_SA,"cc-by-sa-"),(CC_BY,"cc-by-")],
+                               versionString <- maybeToList $ stripPrefix prefix licenseString]

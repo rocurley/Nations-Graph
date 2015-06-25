@@ -42,7 +42,7 @@ import Control.Monad.State
 import qualified Data.Graph.Inductive as G
 import Data.Graph.Inductive (Gr)
 import Data.GraphViz
-import Data.GraphViz.Attributes.Complete
+import Data.GraphViz.Attributes.Complete hiding (Image)
 
 import Debug.Trace
 
@@ -90,7 +90,7 @@ showBNG ng@(BuildingNationGraph _ _ synonyms todo) errors =
     M.foldWithKey (\ k (NationNode (NationValue n sy ey _ key flag) p s) rest -> k ++
             "\n\tname:\n\t\t" ++ n ++
             "\n\tlifetime:\n\t\t" ++ showLifetime sy ey ++
-            "\n\tflag:\n\t\t" ++ maybe "No Flag" _flagUrl flag ++
+            "\n\tflag:\n\t\t" ++ maybe "No Flag" show flag ++
             "\n\tprecursors:" ++
             foldMap ("\n\t\t"++) p ++
             "\n\tsuccessors:" ++
@@ -164,7 +164,7 @@ instance ToJSON (Gr NationValue ()) where
                     ("x",) <$> toJSON <$> fst <$> pos,
                     ("y",) <$> toJSON <$> snd <$> pos,
                     Just ("wikiArticle", toJSON key),
-                    ("flag",) <$> toJSON <$> _flagUrl <$> flag
+                    ("flag",) <$> toJSON <$> flag
                   ]
             ) $ G.labNodes graph
         jsonEdges = toJSON $ map (\ (p,s,_) ->
@@ -186,9 +186,9 @@ instance FromJSON (Gr NationValue ()) where
                 x <- node.:?"x"
                 y <- node.:?"y"
                 key <- node.:"wikiArticle"
-                flagUrl <- node.:?"flag"
+                flag <- node.:?"flag"
                 let pos = (,) <$> x <*> y
-                return (id,NationValue label startYear endYear pos key (Flag <$> flagUrl))
+                return (id,NationValue label startYear endYear pos key flag)
             ) $ V.toList jsonNodes
         edges <- traverse (\ (Object edge) ->
                 (,,()) <$> edge.:"source" <*> edge.:"target"
@@ -327,27 +327,45 @@ tweakElement gr = execState $ do
     width <- use (id./named "rect".attr "width")
     height <- use (id./named "rect".attr "height")
     nodes%=filter (\ node -> node^?_Element.localName /= Just "text")
+    let br = NodeElement $ Element "{http://www.w3.org/1999/xhtml}br" M.empty []
+    let flagNodes = case flag of
+            Nothing -> []
+            Just (Image directURL landingURL) -> [br,
+                NodeElement $
+                  Element "{http://www.w3.org/1999/xhtml}a"
+                    (M.singleton "href" $ T.pack landingURL)
+                    [
+                      NodeElement $
+                        Element "{http://www.w3.org/1999/xhtml}img"
+                          (M.fromList [
+                              ("src", T.pack directURL),
+                              ("class", "flag")
+                              ]
+                          )
+                          []
+                    ]
+                ]
+
     let miniBody = Element
             "{http://www.w3.org/1999/xhtml}body"
-            M.empty
+            M.empty $
             [
                 NodeElement $ Element
                     "{http://www.w3.org/1999/xhtml}div"
                     (M.singleton "class" "node")
-                    [
-                        NodeElement $ Element
-                            "{http://www.w3.org/1999/xhtml}a"
-                            (M.fromList [
-                                ("href", "http://en.wikipedia.org/wiki/"<> T.pack wikiLink),
-                                ("target","_blank")
-                            ])
-                            [NodeContent $ T.pack name],
-                        NodeElement $ Element
-                            "{http://www.w3.org/1999/xhtml}br"
-                            M.empty
-                            [],
-                        NodeContent $ T.pack $ showLifetime sy ey
-                    ]
+                    (
+                        [
+                            NodeElement $ Element
+                                "{http://www.w3.org/1999/xhtml}a"
+                                (M.fromList [
+                                    ("href", "http://en.wikipedia.org/wiki/"<> T.pack wikiLink),
+                                    ("target","_blank")
+                                ])
+                                [NodeContent $ T.pack name],
+                            br,
+                            NodeContent $ T.pack $ showLifetime sy ey
+                        ] ++ flagNodes
+                    )
             ]
     let foreignObject = Element
             "{http://www.w3.org/2000/svg}foreignObject"

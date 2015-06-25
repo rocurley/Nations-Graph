@@ -65,7 +65,7 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
         examined =
             bestName `Map.member` nationsGraph ||
             bestName `Map.member` subdivisionsGraph
-        getFlag :: String -> ErrorHandlingT IO Flag
+        getFlag :: String -> ErrorHandlingT IO Image
         getFlag flagName = do
-          (flagUrl,licence) <- httpGetImage sess flagName
-          return $ Flag flagUrl
+          (flag,licence) <- httpGetImage sess flagName
+          return flag

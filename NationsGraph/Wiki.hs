@@ -25,7 +25,8 @@ import Control.Applicative as A
 
 import Control.Lens
 
-import qualified Data.Text as T
+import qualified Data.Text as Text
+import Data.Text (Text)
 
 import qualified Data.Attoparsec.Text as AP
 
@@ -36,7 +37,7 @@ import Control.Monad.Trans.Maybe
 import Safe
 
 emptyNode :: WikiNode -> Bool
-emptyNode (WikiText t) = T.null t
+emptyNode (WikiText t) = Text.null t
 emptyNode _ = False
 
 wikiFlatten :: WikiMarkup -> WikiMarkup
@@ -61,7 +62,7 @@ xmlComment = do
     "<!--"
     content <- many $ nonDash <|> singleDash
     "-->"
-    return $ WikiComment $ T.pack $ concat content
+    return $ WikiComment $ Text.pack $ concat content
     where
     nonDash = (:[]) <$> AP.notChar '-'
     singleDash = do
@@ -69,21 +70,21 @@ xmlComment = do
         c <- AP.notChar '-'
         return ['-',c]
 
-xmlName :: AP.Parser T.Text
+xmlName :: AP.Parser Text
 xmlName = do
     c1 <- AP.letter <|> AP.char '_' <|> AP.char ':'
     rest <- AP.takeWhile $ \ c ->
         isLetter c || isDigit c || (c `elem` (".-_:" :: String))
-    return $ T.cons c1 rest
+    return $ Text.cons c1 rest
 
-xmlAttribute :: AP.Parser (T.Text,T.Text)
+xmlAttribute :: AP.Parser (Text,Text)
 xmlAttribute = do
     name <- xmlName
     "=\""
     value <- AP.takeWhile(\ c -> c /= '>' && not (isSpace c))
     return (name,value)
 
-xmlTag :: AP.Parser (T.Text,M.Map T.Text T.Text)
+xmlTag :: AP.Parser (Text,M.Map Text Text)
 xmlTag = do
     "</" <|> "<"
     name <- xmlName
@@ -92,7 +93,7 @@ xmlTag = do
     ">"<|> "/>"
     return (name, M.fromList attributes)
 
-xmlSpecificTag :: T.Text -> AP.Parser (T.Text,M.Map T.Text T.Text)
+xmlSpecificTag :: Text -> AP.Parser (Text,M.Map Text Text)
 xmlSpecificTag name = do
     "<" <|> "</"
     AP.string name
@@ -107,7 +108,7 @@ wikiParser = do
             wikiLinkParser <|>
             wikiTemplateParser <|>
             WikiText <$> ("<"<|>">") <|>
-            (WikiText <$> T.singleton <$> foldr ((<|>) . nonDouble) A.empty ("{}[]"::String)) <|>
+            (WikiText <$> Text.singleton <$> foldr ((<|>) . nonDouble) A.empty ("{}[]"::String)) <|>
             (WikiText <$> AP.takeWhile (AP.notInClass "{}[]<>|"))
     if emptyNode begin
     then return $ WikiMarkup $ begin:|[]
@@ -131,13 +132,13 @@ wikiLinkParser = do
     "]]"
     return $ WikiLink first rest
 
-wikiTemplateNamedParameter :: AP.Parser (T.Text,WikiMarkup)
+wikiTemplateNamedParameter :: AP.Parser (Text,WikiMarkup)
 wikiTemplateNamedParameter = do
     "|"
     key <- AP.takeWhile (\ c -> c /='|' && c /= '=' && c /= '}')
     "="
     value <- wikiParser
-    return (T.strip key,value)
+    return (Text.strip key,value)
 
 wikiTemplateUnNamedParameter :: AP.Parser WikiMarkup
 wikiTemplateUnNamedParameter = do
@@ -150,9 +151,9 @@ wikiTemplateParser = do
     title <- AP.takeWhile (\ c -> c /= '|' && c /= '}')
     parameters <- A.many $ fmap Right wikiTemplateNamedParameter <|> fmap Left wikiTemplateUnNamedParameter
     "}}"
-    return $ WikiTemplate (T.strip title) [x | Left x <- parameters] $ M.fromList [x | Right x <- parameters]
+    return $ WikiTemplate (Text.strip title) [x | Left x <- parameters] $ M.fromList [x | Right x <- parameters]
 
-redirectParser :: AP.Parser T.Text
+redirectParser :: AP.Parser Text
 redirectParser = do
     "#REDIRECT"
     A.many AP.space
@@ -171,16 +172,16 @@ yearParser = do
 
 readYear :: String -> Either HistoryError Int
 readYear = either (const $ Left $ PropInterpretationError "year") Right .
-    AP.parseOnly yearParser . T.strip . T.pack
+    AP.parseOnly yearParser . Text.strip . Text.pack
 
-findTemplate :: T.Text -> WikiMarkup -> Maybe WikiNode
+findTemplate :: Text -> WikiMarkup -> Maybe WikiNode
 findTemplate target = getFirst . foldMap (First .
     \case
-        t@(WikiTemplate title _ _) -> if T.toLower title == target then Just t else Nothing
+        t@(WikiTemplate title _ _) -> if Text.toLower title == target then Just t else Nothing
         _ -> Nothing
     ) . wikiList
 
-getPropAsText :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> Either HistoryError (Maybe T.Text)
+getPropAsText :: Text -> AutoLinkedFlag -> M.Map Text WikiMarkup -> Either HistoryError (Maybe Text)
 getPropAsText propName isAutoLinked propMap = sequence $ do
     propVal <- M.lookup propName propMap
     return $ case (wikiList <$> wikiFilterNonText propVal,isAutoLinked) of
@@ -194,24 +195,27 @@ wikiFilterNonText =
     fmap WikiMarkup . nonEmpty .
     Data.List.NonEmpty.filter (\case
         WikiComment _ -> False
-        WikiHTMLTag name _ -> case map toLower $ T.unpack name of
+        WikiHTMLTag name _ -> case map toLower $ Text.unpack name of
             "br" -> False
             "small" -> False
             _ -> True
+        WikiText text -> not $ Text.all isSpace text
         _ -> True
     ) .
     wikiList
 
-getInfobox :: WikiMarkup -> ErrorHandling Infobox
-getInfobox wiki = do
-    (title, props, subdivisionInfo) <- case (findTemplate "infobox former country" wiki,
-          findTemplate "infobox former subdivision" wiki) of
-        (Just _, Just _) -> raiseError $ Left DoubleInfobox
-        (Just (WikiTemplate title _ props), Nothing) -> return (title, props, Nothing)
-        (Nothing, Just (WikiTemplate title _ props)) -> return (title, props, Just $ parents props)
-        (Nothing,Nothing) -> raiseError $ Left MissingInfobox
+getInfobox :: Text -> WikiMarkup -> ErrorHandling Infobox
+getInfobox articleTitle wiki = do
+    (props, subdivisionInfo) <- case (findTemplate "infobox former country" wiki,
+          findTemplate "infobox former subdivision" wiki,
+          findTemplate "infobox country" wiki) of
+        (Nothing, Nothing, Nothing) -> raiseError $ Left MissingInfobox
+        (Just (WikiTemplate _ _ props), Nothing, Nothing) -> return (props, Nothing)
+        (Nothing, Just (WikiTemplate _ _ props), Nothing) -> return (props, Just $ parents props)
+        (Nothing, Nothing, Just (WikiTemplate _ _ props)) -> return (props, Nothing)
+        _ -> raiseError $ Left DoubleInfobox
     Infobox <$>
-      name props <*>
+      name articleTitle props <*>
       commonName props <*>
       startYear props <*>
       endYear props <*>
@@ -220,41 +224,41 @@ getInfobox wiki = do
       conn props 's'<*>
       pure subdivisionInfo
     where
-        conn :: M.Map T.Text WikiMarkup -> Char -> ErrorHandling [String]
+        conn :: M.Map Text WikiMarkup -> Char -> ErrorHandling [String]
         conn props ty = do
             rawPropValues <- (sequence [getOptionalField propName AutoLinked props|
-                i<-[1..15], let propName = T.pack $ ty:show i])
+                i<-[1..15], let propName = Text.pack $ ty:show i])
             return $ filter (not . null) $ catMaybes rawPropValues
 
-        parents :: M.Map T.Text WikiMarkup -> [String]
-        parents props = [T.unpack nationName | WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
+        parents :: M.Map Text WikiMarkup -> [String]
+        parents props = [Text.unpack nationName | WikiLink nationName _<- props^.ix "nation".to (toList.wikiList)]
 
-        getMandatoryField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling String
+        getMandatoryField :: Text -> AutoLinkedFlag -> M.Map Text WikiMarkup -> ErrorHandling String
         getMandatoryField fieldName isAutoLinked props = do
             fieldMay <- raiseError $ getPropAsText fieldName isAutoLinked props
             field <- raiseError $ note (MissingInfoboxFieldError fieldName) fieldMay
-            return $ T.unpack $ T.strip $ field
+            return $ Text.unpack $ Text.strip $ field
 
-        getOptionalField :: T.Text -> AutoLinkedFlag -> M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
+        getOptionalField :: Text -> AutoLinkedFlag -> M.Map Text WikiMarkup -> ErrorHandling (Maybe String)
         getOptionalField fieldName isAutoLinked props = do
             fieldMay <- fmap join $ discardError $ getPropAsText fieldName isAutoLinked props
-            return $ T.unpack . T.strip <$> fieldMay
+            return $ Text.unpack . Text.strip <$> fieldMay
 
-        name :: M.Map T.Text WikiMarkup -> ErrorHandling String
-        name = getMandatoryField "conventional_long_name" NotAutoLinked
+        name :: Text -> M.Map Text WikiMarkup -> ErrorHandling String
+        name title props = fromMaybe (Text.unpack title) <$> getOptionalField "conventional_long_name" NotAutoLinked props
 
-        commonName :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
+        commonName :: M.Map Text WikiMarkup -> ErrorHandling (Maybe String)
         commonName = getOptionalField "common_name" NotAutoLinked
 
-        flag :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe String)
+        flag :: M.Map Text WikiMarkup -> ErrorHandling (Maybe String)
         flag = getOptionalField "image_flag" AutoLinked
 
-        startYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
+        startYear :: M.Map Text WikiMarkup -> ErrorHandling (Maybe Int)
         startYear props = runMaybeT $ do
             yearText <- MaybeT $ getOptionalField "year_start" NotAutoLinked props
             MaybeT $ discardError $ readYear yearText
 
-        endYear :: M.Map T.Text WikiMarkup -> ErrorHandling (Maybe Int)
+        endYear :: M.Map Text WikiMarkup -> ErrorHandling (Maybe Int)
         endYear props = runMaybeT $ do
             yearText <- MaybeT $ getOptionalField "year_end" NotAutoLinked props
             MaybeT $ discardError $ readYear yearText
