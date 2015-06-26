@@ -39,7 +39,7 @@ import Web.Scotty
 --TODO:
 --Non-ascii characters
 
-initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Bourbon Restoration"]
+initialGraph = BuildingNationGraph M.empty M.empty M.empty ["History of Sudan (1969–85)"]
 
 doIt :: Int -> BuildingNationGraph -> IO (BuildingNationGraph, ErrorLog)
 doIt n graph = Sess.withSession (\ sess -> runWriterT $ doIt' sess n graph) where

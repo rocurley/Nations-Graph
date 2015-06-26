@@ -13,6 +13,7 @@ import Control.Monad.Trans.Writer
 import Control.Monad.Trans.Either
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Class
+import Control.Monad.IO.Class
 
 import qualified Data.Map as Map
 import Data.Map (Map)
@@ -47,19 +48,21 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
                     then synonyms
                     else Map.insert next realArticleName synonyms
                   insert :: Either NationNode SubdivisionNode -> WriterT ErrorLog IO BuildingNationGraph
-                  insert nodeEither = return $ case nodeEither of
-                      Left node@(NationNode nationValue precursors successors) ->
-                          BuildingNationGraph
-                            (Map.insert realArticleName node nationsGraph)
-                            subdivisionsGraph
-                            synonyms
-                            (Set.toList precursors ++ Set.toList successors ++ stack)
-                      Right node@(SubdivisionNode nationValue possibleParents precursors successors) ->
-                          BuildingNationGraph
-                            nationsGraph
-                            (Map.insert realArticleName node subdivisionsGraph)
-                            synonyms
-                            (Set.toList precursors ++ Set.toList successors ++ stack)
+                  insert nodeEither = do
+                      liftIO $ putStrLn realArticleName
+                      return $ case nodeEither of
+                          Left node@(NationNode nationValue precursors successors) ->
+                              BuildingNationGraph
+                                (Map.insert realArticleName node nationsGraph)
+                                subdivisionsGraph
+                                newSynonyms
+                                (Set.toList precursors ++ Set.toList successors ++ stack)
+                          Right node@(SubdivisionNode nationValue possibleParents precursors successors) ->
+                              BuildingNationGraph
+                                nationsGraph
+                                (Map.insert realArticleName node subdivisionsGraph)
+                                newSynonyms
+                                (Set.toList precursors ++ Set.toList successors ++ stack)
     where
         bestName = fromMaybe next (Map.lookup next synonyms)
         examined =
