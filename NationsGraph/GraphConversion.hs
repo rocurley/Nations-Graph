@@ -54,18 +54,22 @@ addEdges (NationNode _ p1 s1)  (NationNode val p2 s2) =
 
 toAdjacency :: BuildingNationGraph -> M.Map NationKey NationNode
 toAdjacency (BuildingNationGraph nations subdivisions synonyms _) = let
+
+    --Takes an unvalidated name and (Maybe) returns the corresponding cannonical name
     strictCannonicalNationName :: String -> Maybe NationKey
     strictCannonicalNationName name =
         if name `M.member` nations
         then Just name
         else M.lookup name synonyms
 
+    --Takes a cannonical subdivision key and yields the best guess at its cannonical nation name.
     subdivisionKeyToNationKey :: M.Map String NationKey
     subdivisionKeyToNationKey = M.mapWithKey  (\ name (SubdivisionNode _ possibleParents _ _) ->
             fromMaybe name $ getFirst $ -- Default to the subdivision name
                 foldMap (First . strictCannonicalNationName) possibleParents
         ) subdivisions
 
+    --Takes an unvalidated name and yields the best guess at its cannonical key.
     cannonicalNationName :: String -> NationKey
     cannonicalNationName name = let
         deSynonymized = fromMaybe name $ M.lookup name synonyms
@@ -75,10 +79,11 @@ toAdjacency (BuildingNationGraph nations subdivisions synonyms _) = let
         (\ (NationNode val p s) -> NationNode val
             (S.map cannonicalNationName p) (S.map cannonicalNationName s)) <$>
         nations
+
     in M.foldrWithKey (\ subdivisionName (SubdivisionNode nationValue _ p s) acc ->
             M.insertWith addEdges
                 (cannonicalNationName subdivisionName)
-                (NationNode nationValue p s)
+                (NationNode nationValue (S.map cannonicalNationName p) (S.map cannonicalNationName s))
                 acc
         ) cannonicalNationsGraph subdivisions
 
@@ -131,7 +136,7 @@ toFGL nationGraph = let
 toUnlabeledTGF :: Gr a b -> String
 toUnlabeledTGF graph = let
     nodesStr = foldMap (\(i, _) -> Endo $ (++) $ show i ++ " " ++ show i ++ "\n") $ G.labNodes graph
-    edgesStr = foldMap (\(i, j, _) -> Endo $ (++) $ show i ++ " " ++ show j ++ "\n") $ G.labEdges graph
+    edgesStr = foldMap (\(i, j, _) -> Endo $ (++) $ show i ++ " " ++ show j ++ " " ++ show (i,j) ++  "\n") $ G.labEdges graph
     in appEndo nodesStr $ ("#\n"++) $ appEndo edgesStr []
 
 toTGF :: Gr NationValue () -> String
