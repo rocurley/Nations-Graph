@@ -21,11 +21,13 @@ import qualified Data.Set as Set
 import Data.Set (Set)
 import Data.Maybe
 
+import Control.DeepSeq
+
 import qualified Network.Wreq.Session as Sess
 
 getNext :: Sess.Session -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
 getNext _ ng@(BuildingNationGraph _ _ _ []) = return ng
-getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) =
+getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) = WriterT $ fmap force $ runWriterT $
     if examined
     then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
     else do

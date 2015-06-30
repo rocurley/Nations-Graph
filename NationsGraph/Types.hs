@@ -4,6 +4,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE BangPatterns #-}
 
 module NationsGraph.Types (
     Wiki(..),
@@ -42,6 +44,7 @@ import Safe
 import Data.Maybe
 import Data.List
 import Data.List.NonEmpty
+import qualified Data.Map.Strict as SMap
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
@@ -64,6 +67,9 @@ import Control.Monad.Trans.Reader
 import Control.Error.Util
 
 import Control.Applicative
+
+import GHC.Generics (Generic)
+import Control.DeepSeq
 
 data Wiki = Wikipedia | WikiCommons
 
@@ -91,15 +97,28 @@ data HistoryError = HTTPError HttpException |
                     MissingImage |
                     UnknownLicense String deriving Show
 
+instance NFData HistoryError where
+    rnf (HTTPError httpError) = seq httpError ()
+    rnf JsonParseError = ()
+    rnf (WikiParseError err) = deepseq err ()
+    rnf MissingInfobox = ()
+    rnf InfoboxInterpretationError = ()
+    rnf (PropInterpretationError text) = deepseq text ()
+    rnf (MissingInfoboxFieldError text) = deepseq text ()
+    rnf MissingImage = ()
+    rnf (UnknownLicense str) = deepseq str ()
+
 data AutoLinkedFlag = AutoLinked | NotAutoLinked
 
 type ErrorContext = String
 
-newtype ErrorLog = ErrorLog (Map ErrorContext [HistoryError]) deriving Show
+newtype ErrorLog = ErrorLog (SMap.Map ErrorContext [HistoryError]) deriving (Show,Generic)
+
+instance NFData ErrorLog
 
 instance Monoid ErrorLog where
-  mempty = ErrorLog (Map.empty)
-  mappend (ErrorLog a) (ErrorLog b) = ErrorLog $ Map.unionWith (++) a b
+  mempty = ErrorLog (SMap.empty)
+  mappend (ErrorLog a) (ErrorLog b) = ErrorLog $ SMap.unionWith (++) a b
 
 type ErrorHandling = ErrorHandlingT Identity
 
@@ -132,7 +151,7 @@ discardError eitherT = do
     Right a -> return (Just a)
     Left err -> do
       context <- lift $ ask
-      lift $ tell $ ErrorLog $ Map.singleton context [err]
+      lift $ tell $ ErrorLog $ SMap.singleton context [err]
       return Nothing
 
 raiseError :: MonadEither HistoryError m e => e a -> ErrorHandlingT m a
@@ -151,7 +170,9 @@ data NationNode = NationNode
         _nationValue :: NationValue,
         _nationPrecursors :: Set NationKey,
         _nationSuccessors :: Set NationKey
-    }
+    } deriving (Show, Generic)
+
+instance NFData NationNode
 
 instance Arbitrary NationNode where
     arbitrary = NationNode <$> arbitrary <*>
@@ -166,13 +187,15 @@ data NationValue = NationValue
         _position :: Maybe (Float, Float),
         _wikiArticle :: String,
         _flag :: Maybe Image
-    } deriving (Show, Ord, Eq)
+    } deriving (Show, Ord, Eq, Generic)
+
+instance NFData NationValue
 
 data Image = Image
   {
     _imageDirectURL  :: URL,
     _imageLandingURL :: URL
-  } deriving (Show, Ord, Eq)
+  } deriving (Show, Ord, Eq, Generic)
 
 instance Arbitrary Image where
   arbitrary = Image <$> arbitrary <*> arbitrary
@@ -186,6 +209,8 @@ instance FromJSON Image where
         landing <- json.: "landingURL"
         return $ Image direct landing
 
+instance NFData Image
+
 makeLenses ''NationValue
 instance Arbitrary NationValue where
     arbitrary = NationValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
@@ -196,13 +221,17 @@ data SubdivisionNode = SubdivisionNode
         _subdivisionPossibleParents :: [NationKey],
         _subdivisionPrecursors :: Set NationKey,
         _subdivisionSuccessors :: Set NationKey
-    }
+    } deriving (Show, Generic)
+
+instance NFData SubdivisionNode
 
 data BuildingNationGraph = BuildingNationGraph {
-    _nations :: (Map NationKey NationNode),
-    _subdivisions :: (Map NationKey SubdivisionNode),
-    _synonyms :: (Map String NationKey),
-    _todo :: [String]}
+    _nations :: (SMap.Map NationKey NationNode),
+    _subdivisions :: (SMap.Map NationKey SubdivisionNode),
+    _synonyms :: (SMap.Map String NationKey),
+    _todo :: [String]} deriving (Show,Generic)
+
+instance NFData BuildingNationGraph
 
 data Infobox = Infobox{
   _infoboxName :: String,
@@ -213,7 +242,9 @@ data Infobox = Infobox{
   _infoboxPrecursors :: [String],
   _infoboxSuccessors :: [String],
   _infoboxSubdivision :: Maybe Subdivision
-} deriving Show
+} deriving (Show, Generic)
+
+instance NFData Infobox
 
 infoboxToNode :: Monad m => (String -> ErrorHandlingT m Image) -> Infobox -> String ->
   ErrorHandlingT m (Either NationNode SubdivisionNode)
@@ -235,7 +266,9 @@ infoboxToNode getFlag (Infobox name commonName sYear eYear maybeFlagName precurs
 
 type Subdivision = [String]
 
-data License = PD|CC0|CC_BY Float|CC_BY_SA Float deriving Show
+data License = PD|CC0|CC_BY Float|CC_BY_SA Float deriving (Show,Generic)
+
+instance NFData License
 
 parseLicense :: String -> Maybe License
 parseLicense "pd" = Just PD

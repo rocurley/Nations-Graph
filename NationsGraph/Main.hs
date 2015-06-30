@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Main where
 
@@ -46,7 +47,7 @@ doIt n graph = Sess.withSession (\ sess -> runWriterT $ doIt' sess n graph) wher
     doIt' :: Sess.Session -> Int -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
     doIt' _ 0 graph = return $ graph
     doIt' sess n graph = do
-        next <- getNext sess graph
+        !next <- getNext sess graph
         doIt' sess (n-1) next
 
 loadLayoutGraph :: IO (Gr NationValue ())
