@@ -5,7 +5,6 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE BangPatterns #-}
 
 module NationsGraph.Types (
     Wiki(..),
@@ -44,7 +43,6 @@ import Safe
 import Data.Maybe
 import Data.List
 import Data.List.NonEmpty
-import qualified Data.Map.Strict as SMap
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
@@ -112,13 +110,13 @@ data AutoLinkedFlag = AutoLinked | NotAutoLinked
 
 type ErrorContext = String
 
-newtype ErrorLog = ErrorLog (SMap.Map ErrorContext [HistoryError]) deriving (Show,Generic)
+newtype ErrorLog = ErrorLog (Map ErrorContext [HistoryError]) deriving (Show,Generic)
 
 instance NFData ErrorLog
 
 instance Monoid ErrorLog where
-  mempty = ErrorLog (SMap.empty)
-  mappend (ErrorLog a) (ErrorLog b) = ErrorLog $ SMap.unionWith (++) a b
+  mempty = ErrorLog (Map.empty)
+  mappend (ErrorLog a) (ErrorLog b) = ErrorLog $ Map.unionWith (++) a b
 
 type ErrorHandling = ErrorHandlingT Identity
 
@@ -151,7 +149,7 @@ discardError eitherT = do
     Right a -> return (Just a)
     Left err -> do
       context <- lift $ ask
-      lift $ tell $ ErrorLog $ SMap.singleton context [err]
+      lift $ tell $ ErrorLog $ Map.singleton context [err]
       return Nothing
 
 raiseError :: MonadEither HistoryError m e => e a -> ErrorHandlingT m a
@@ -226,9 +224,9 @@ data SubdivisionNode = SubdivisionNode
 instance NFData SubdivisionNode
 
 data BuildingNationGraph = BuildingNationGraph {
-    _nations :: (SMap.Map NationKey NationNode),
-    _subdivisions :: (SMap.Map NationKey SubdivisionNode),
-    _synonyms :: (SMap.Map String NationKey),
+    _nations :: (Map NationKey NationNode),
+    _subdivisions :: (Map NationKey SubdivisionNode),
+    _synonyms :: (Map String NationKey),
     _todo :: [String]} deriving (Show,Generic)
 
 instance NFData BuildingNationGraph

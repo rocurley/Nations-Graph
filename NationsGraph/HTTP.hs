@@ -30,14 +30,12 @@ import Control.Monad.IO.Class
 import Control.Error.Util
 import Control.Exception
 
-import Control.DeepSeq
-
 import Network.Wreq
 import qualified Network.Wreq.Session as Sess
 
 import qualified Data.Aeson.Types as ATypes
 
-getWiki :: Sess.Session -> Wiki -> String -> ErrorHandlingT IO (String,T.Text,Maybe (Image, String))
+getWiki :: Sess.Session -> Wiki -> String -> ErrorHandlingT IO (String,T.Text,Maybe (Image, String),Maybe ATypes.Value)
 getWiki sess wiki article = do
     let api = apiEndpoint wiki
     let opts = param "action" .~ ["query"] $
@@ -59,11 +57,11 @@ getWiki sess wiki article = do
     let imagedescriptionUrl = resp^?pages.key "imageinfo".nth 0.key "descriptionurl"._String.to T.unpack
     let licenceStr = resp^?pages.key "imageinfo".nth 0.key "extmetadata".key "License".key "value"._String.to T.unpack
     let image = Image <$> imageUrl <*> imagedescriptionUrl
-    return (title, source, (,) <$> image <*> licenceStr)
+    return (title, source, (,) <$> image <*> licenceStr, resp^?pages)
 
 httpGetInfobox :: Sess.Session -> String -> ErrorHandlingT IO (String,Infobox)
-httpGetInfobox sess target = do
-  (cannonicalName,wiki,_) <- getWiki sess Wikipedia target
+httpGetInfobox sess target =  do
+  (cannonicalName,wiki,_,_) <- getWiki sess Wikipedia target
   --The endOfInput won't work unless the wiki parser is improved.
   --See the result for French Thrid Republic for a hint.
   --parse <- EitherT $ return $ (_Left%~WikiParseError) $ parseOnly (wikiParser<*endOfInput) wiki
@@ -72,8 +70,8 @@ httpGetInfobox sess target = do
   return (cannonicalName,infobox)
 
 httpGetImage :: Sess.Session -> String -> ErrorHandlingT IO  (Image, License)
-httpGetImage sess imageName = do
-  (_,wiki,imageAndLicenseMay) <- getWiki sess WikiCommons $ "file:" ++ imageName
+httpGetImage sess imageName =  do
+  (_,wiki,imageAndLicenseMay,_) <- getWiki sess WikiCommons $ "file:" ++ imageName
   (image,licenseStr) <- rebaseErrorHandling $ raiseError $ note MissingImage imageAndLicenseMay
   parse <- rebaseErrorHandling $ raiseError $  (_Left%~WikiParseError) $ AP.parseOnly wikiParser wiki
   license <- rebaseErrorHandling $ raiseError $ note (UnknownLicense licenseStr) $ parseLicense licenseStr
