@@ -34,6 +34,11 @@ import qualified Text.XML
 import Data.Graph.Inductive (Gr)
 
 import Web.Scotty
+
+import Criterion.Main
+import Criterion.Types
+import Criterion.Main.Options
+
 --import Network.Wai.Middleware.Gzip
 
 --TODO:
@@ -42,12 +47,13 @@ import Web.Scotty
 initialGraph = BuildingNationGraph M.empty M.empty M.empty ["Judea (Roman province)"]
 
 doIt :: Int -> BuildingNationGraph -> IO (BuildingNationGraph, ErrorLog)
-doIt n graph = Sess.withSession (\ sess -> runWriterT $ doIt' sess n graph) where
-    doIt' :: Sess.Session -> Int -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
-    doIt' _ 0 graph = return $ graph
-    doIt' sess n graph = do
-        next <- getNext sess graph
-        doIt' sess (n-1) next
+doIt n graph = Sess.withSession (\ wikipediaSession -> (Sess.withSession (\ wikimediaSession ->
+  runWriterT $ doIt' wikipediaSession wikimediaSession n graph))) where
+    doIt' :: Sess.Session -> Sess.Session -> Int -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
+    doIt' _ _ 0 graph = return $ graph
+    doIt' wikipediaSession wikimediaSession n graph = do
+        next <- getNext wikipediaSession wikimediaSession graph
+        doIt' wikipediaSession wikimediaSession (n-1) next
 
 loadLayoutGraph :: IO (Gr NationValue ())
 loadLayoutGraph = do
@@ -93,27 +99,36 @@ runWebserver opts= do
             file "./d3.js"
             setHeader "Content-Type" "application/javascript"
 
+runDownload :: Int -> IO ()
+runDownload n = do
+    (result,errors) <- doIt n initialGraph
+    putStrLn $ showBNG result errors
+    let fglResult = toFGL result
+    writeFile "./out.tgf" $ toUnlabeledTGF fglResult
+    BSC.writeFile "./out.json" $ encodePretty fglResult
 
-main = do
-    args <- getArgs
-    case args of
-        ["download",nStr] -> do
-            let n = read nStr
-            (result,errors) <- doIt n initialGraph
-            putStrLn $ showBNG result errors
-            let fglResult = toFGL result
-            writeFile "./out.tgf" $ toUnlabeledTGF fglResult
-            BSC.writeFile "./out.json" $ encodePretty fglResult
-        ["join"] -> do
-            fglResult <- loadLayoutGraph
-            --runGraphviz (toGV fglResult) Svg "./out.svg" TODO: Support loading positions
-            --LTIO.writeFile "out.dot" $ renderDot $ toDot $ toGV fglResult
-            --writeFile "./out.tgf" $ toTGF fglResult
-            BSC.writeFile "./out2.json" $ encodePretty fglResult
-        "web":webArgs -> let
-            webArgsSet = S.fromList webArgs
-            options = WebOptions{
-                    svgOnly = "--svg-only" `S.member` webArgsSet
-                }
-            in runWebserver options
-        otherwise -> putStrLn "Invalid args"
+runJoin :: IO ()
+runJoin = do
+    fglResult <- loadLayoutGraph
+    --runGraphviz (toGV fglResult) Svg "./out.svg" TODO: Support loading positions
+    --LTIO.writeFile "out.dot" $ renderDot $ toDot $ toGV fglResult
+    --writeFile "./out.tgf" $ toTGF fglResult
+    BSC.writeFile "./out2.json" $ encodePretty fglResult
+
+mainWithArgs :: [String] -> IO ()
+mainWithArgs ["download", nStr] = runDownload (read nStr)
+mainWithArgs ["join"] = runJoin
+mainWithArgs ("web":webArgs) = let
+    webArgsSet = S.fromList webArgs
+    options = WebOptions{
+            svgOnly = "--svg-only" `S.member` webArgsSet
+        }
+    in runWebserver options
+mainWithArgs ("bench" : args) = let
+    config = defaultConfig {reportFile = Just("./benchmark.html")}
+    in defaultMainWith config [
+      bench (unwords args) $ nfIO $ mainWithArgs args
+    ]
+mainWithArgs _ = putStrLn "Invalid args"
+
+main = getArgs >>= mainWithArgs

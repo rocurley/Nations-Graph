@@ -72,8 +72,10 @@ import Control.DeepSeq
 data Wiki = Wikipedia | WikiCommons
 
 apiEndpoint :: Wiki -> String
-apiEndpoint Wikipedia = "http://en.wikipedia.org/w/api.php"
-apiEndpoint WikiCommons = "http://commons.wikimedia.org/w/api.php"
+--apiEndpoint Wikipedia = "http://en.wikipedia.org/w/api.php"
+--I've got a local wikipedia instance running here for speed.
+apiEndpoint Wikipedia = "http://10.0.2.2:8080/wiki/api.php"
+apiEndpoint WikiCommons = "http://10.0.2.2:8080/commons/api.php"
 
 newtype WikiMarkup = WikiMarkup{wikiList ::NonEmpty WikiNode} deriving (Show)
 

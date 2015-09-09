@@ -25,24 +25,24 @@ import Control.DeepSeq
 
 import qualified Network.Wreq.Session as Sess
 
-getNext :: Sess.Session -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
-getNext _ ng@(BuildingNationGraph _ _ _ []) = return ng
-getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) = WriterT $ fmap force $ runWriterT $
+getNext :: Sess.Session -> Sess.Session -> BuildingNationGraph -> WriterT ErrorLog IO BuildingNationGraph
+getNext _ _ ng@(BuildingNationGraph _ _ _ []) = return ng
+getNext wikipediaSession wikimediaSession (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:stack)) = WriterT $ fmap force $ runWriterT $
     if examined
-    then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
+    then getNext wikipediaSession wikimediaSession $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
     else do
         result <- (`runReaderT` bestName) $ runEitherT $ do
-          (realArticleName, infobox) <- httpGetInfobox sess bestName
+          (realArticleName, infobox) <- httpGetInfobox wikipediaSession bestName
           node <- infoboxToNode getFlag infobox realArticleName
           return (realArticleName, node)
         case result of
             Left err -> do
                 lift $ putStrLn $ show err ++ " for " ++ next
                 tell $ ErrorLog $ Map.singleton next [err]
-                getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
+                getNext wikipediaSession wikimediaSession $ BuildingNationGraph nationsGraph subdivisionsGraph synonyms stack
             Right (realArticleName, node)-> do
                 if Map.member realArticleName nationsGraph || Map.member realArticleName subdivisionsGraph
-                then getNext sess $ BuildingNationGraph nationsGraph subdivisionsGraph newSynonyms stack
+                then getNext wikipediaSession wikimediaSession $ BuildingNationGraph nationsGraph subdivisionsGraph newSynonyms stack
                 else insert node
                 where
                   newSynonyms =
@@ -72,5 +72,5 @@ getNext sess (BuildingNationGraph nationsGraph subdivisionsGraph synonyms (next:
             bestName `Map.member` subdivisionsGraph
         getFlag :: String -> ErrorHandlingT IO Image
         getFlag flagName = do
-          (flag,licence) <- httpGetImage sess flagName
+          (flag,licence) <- httpGetImage wikimediaSession flagName
           return flag
